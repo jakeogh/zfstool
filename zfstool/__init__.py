@@ -1,3 +1,4 @@
+from .zfstool import RAID_LIST
 from .zfstool import create_zfs_filesystem
 from .zfstool import create_zfs_filesystem_snapshot
 from .zfstool import create_zfs_pool
