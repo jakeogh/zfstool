@@ -71,13 +71,8 @@ RAID_LIST = ['disk', 'mirror', 'raidz1', 'raidz2', 'raidz3', 'raidz10', 'raidz50
 @click.option('--debug', is_flag=True)
 @click.pass_context
 def cli(ctx,
-        paths: Optional[tuple[str]],
-        sysskel: Path,
-        slice_syntax: str,
         verbose: bool,
         debug: bool,
-        simulate: bool,
-        ipython: bool,
         ):
 
     null, end, verbose, debug = nevd(ctx=ctx,
@@ -85,6 +80,37 @@ def cli(ctx,
                                      ipython=False,
                                      verbose=verbose,
                                      debug=debug,)
+
+
+@cli.command()
+@click.option('--verbose', is_flag=True,)
+@click.option('--debug', is_flag=True,)
+@click.pass_context
+def zfs_check_mountpoints(ctx,
+                          *,
+                          verbose: bool,
+                          debug: bool,
+                          ):
+
+    mountpoints = sh.zfs.get('mountpoint')
+    if verbose:
+        ic(mountpoints)
+
+    for line in mountpoints.splitlines()[1:]:
+        line = ' '.join(line.split())
+        if verbose:
+            ic(line)
+        zfs_path = line.split(' mountpoint ')[0]
+        mountpoint = line.split(' mountpoint ')[1]
+        if mountpoint.startswith('none'):
+            continue
+        if mountpoint.startswith('-'):  # snapshot
+            assert '@' in zfs_path
+            continue
+        assert mountpoint.startswith('/')
+        mountpoint = mountpoint.split(' ')[0]
+        ic(zfs_path, mountpoint)
+        assert zfs_path == mountpoint[1:]
 
 
 @cli.command()
