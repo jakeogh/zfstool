@@ -26,15 +26,10 @@
 import os
 import sys
 import time
+from pathlib import Path
 from signal import SIG_DFL
 from signal import SIGPIPE
 from signal import signal
-
-import click
-import sh
-
-signal(SIGPIPE, SIG_DFL)
-from pathlib import Path
 from typing import ByteString
 from typing import Generator
 from typing import Iterable
@@ -44,17 +39,23 @@ from typing import Sequence
 from typing import Tuple
 from typing import Union
 
+import click
+import sh
 from asserttool import eprint
 from asserttool import ic
 from asserttool import maxone
-from asserttool import nevd
-from blocktool import get_block_device_size
-from blocktool import path_is_block_special
+from asserttool import tv
+from clicktool import click_add_options
+from clicktool import click_global_options
+from devicetool import get_block_device_size
+from devicetool import path_is_block_special
 from inputtool import passphrase_prompt
 from itertool import grouper
 from mounttool import block_special_path_is_mounted
 from run_command import run_command
 from timetool import get_timestamp
+
+signal(SIGPIPE, SIG_DFL)
 
 ASHIFT_HELP = '''9: 1<<9 == 512
 10: 1<<10 == 1024
@@ -67,29 +68,26 @@ RAID_LIST = ['disk', 'mirror', 'raidz1', 'raidz2', 'raidz3', 'raidz10', 'raidz50
 
 
 @click.group()
-@click.option('--verbose', is_flag=True)
-@click.option('--debug', is_flag=True)
+@click_add_options(click_global_options)
 @click.pass_context
 def cli(ctx,
-        verbose: bool,
-        debug: bool,
+        verbose: int,
+        verbose_inf: bool,
         ):
 
-    null, end, verbose, debug = nevd(ctx=ctx,
-                                     printn=False,
-                                     ipython=False,
-                                     verbose=verbose,
-                                     debug=debug,)
+    tty, verbose = tv(ctx=ctx,
+                      verbose=verbose,
+                      verbose_inf=verbose_inf,
+                      )
 
 
 @cli.command()
-@click.option('--verbose', is_flag=True,)
-@click.option('--debug', is_flag=True,)
+@click_add_options(click_global_options)
 @click.pass_context
 def zfs_check_mountpoints(ctx,
                           *,
-                          verbose: bool,
-                          debug: bool,
+                          verbose: int,
+                          verbose_inf: bool,
                           ):
 
     mountpoints = sh.zfs.get('mountpoint')
@@ -114,22 +112,32 @@ def zfs_check_mountpoints(ctx,
 
 
 @cli.command()
-@click.argument('devices', required=True, nargs=-1)
+@click.argument('devices',
+                required=True,
+                nargs=-1,
+                type=click.Path(exists=False,
+                                dir_okay=False,
+                                file_okay=True,
+                                allow_dash=False,
+                                path_type=Path,),
+                )
 @click.option('--force', is_flag=True, required=False)
 @click.option('--raid', is_flag=False, required=True, type=click.Choice(RAID_LIST))
 @click.option('--raid-group-size', is_flag=False, required=True, type=int)
 @click.option('--pool-name', is_flag=False, required=True, type=str)
 @click.option('--mount-point', is_flag=False, required=True, type=str)
-@click.option('--verbose', is_flag=True)
-@click.option('--debug', is_flag=True)
-def write_zfs_root_filesystem_on_devices(devices: Tuple[Path, ...],
+@click_add_options(click_global_options)
+@click.pass_context
+def write_zfs_root_filesystem_on_devices(ctx,
+                                         *,
+                                         devices: Iterable[Path, ...],
                                          force: bool,
                                          raid: str,
                                          raid_group_size: int,
                                          pool_name: str,
                                          mount_point: str,
-                                         verbose: bool,
-                                         debug: bool,
+                                         verbose: int,
+                                         verbose_inf: bool,
                                          ):
 
     devices = tuple([Path(_device) for _device in devices])
@@ -139,7 +147,7 @@ def write_zfs_root_filesystem_on_devices(devices: Tuple[Path, ...],
 
     for device in devices:
         assert path_is_block_special(device)
-        assert not block_special_path_is_mounted(device, verbose=verbose, debug=debug,)
+        assert not block_special_path_is_mounted(device, verbose=verbose, )
         if not Path(device).name.startswith('nvme'):
             assert not device.name[-1].isdigit()
 
@@ -232,7 +240,15 @@ def write_zfs_root_filesystem_on_devices(devices: Tuple[Path, ...],
 
 
 @cli.command()
-@click.argument('devices', required=True, nargs=-1)
+@click.argument('devices',
+                required=True,
+                nargs=-1,
+                type=click.Path(exists=False,
+                                dir_okay=False,
+                                file_okay=True,
+                                allow_dash=False,
+                                path_type=Path,),
+                )
 @click.option('--force', is_flag=True, required=False)
 @click.option('--simulate', is_flag=True, required=False)
 @click.option('--skip-checks', is_flag=True, required=False)
@@ -241,9 +257,11 @@ def write_zfs_root_filesystem_on_devices(devices: Tuple[Path, ...],
 @click.option('--pool-name', is_flag=False, required=True, type=str)
 @click.option('--ashift', is_flag=False, required=True, type=int, help=ASHIFT_HELP)
 @click.option('--encrypt', is_flag=True)
-@click.option('--verbose', is_flag=True)
-@click.option('--debug', is_flag=True)
-def create_zfs_pool(devices,
+@click_add_options(click_global_options)
+@click.pass_context
+def create_zfs_pool(ctx,
+                    *,
+                    devices: Iterable[Path],
                     force: bool,
                     simulate: bool,
                     skip_checks: bool,
@@ -251,8 +269,8 @@ def create_zfs_pool(devices,
                     raid_group_size: int,
                     pool_name: str,
                     ashift: int,
-                    verbose: bool,
-                    debug: bool,
+                    verbose: int,
+                    verbose_inf: bool,
                     encrypt: bool,
                     ):
     if verbose:
@@ -265,19 +283,19 @@ def create_zfs_pool(devices,
         assert simulate
 
     # https://raw.githubusercontent.com/ryao/zfs-overlay/master/zfs-install
-    run_command("modprobe zfs || exit 1")
+    run_command("modprobe zfs || exit 1", verbose=verbose,)
 
     for device in devices:
         if not skip_checks:
             assert path_is_block_special(device, follow_symlinks=True)
-            assert not block_special_path_is_mounted(device, verbose=verbose, debug=debug,)
+            assert not block_special_path_is_mounted(device, verbose=verbose, )
         if not (Path(device).name.startswith('nvme') or Path(device).name.startswith('mmcblk')):
             assert not device[-1].isdigit()
 
     if not skip_checks:
-        first_device_size = get_block_device_size(devices[0], verbose=verbose, debug=debug)
+        first_device_size = get_block_device_size(devices[0], verbose=verbose,)
         for device in devices:
-            assert get_block_device_size(device, verbose=verbose, debug=debug) == first_device_size
+            assert get_block_device_size(device, verbose=verbose,) == first_device_size
 
     assert raid_group_size >= 1
     assert len(devices) >= raid_group_size
@@ -321,7 +339,7 @@ def create_zfs_pool(devices,
 
     if encrypt:
         if not simulate:
-            passphrase = passphrase_prompt("zpool", verbose=verbose, debug=debug,)
+            passphrase = passphrase_prompt("zpool", verbose=verbose, )
             passphrase = passphrase.decode('utf8')
 
     command = "zpool create"
@@ -375,8 +393,7 @@ def create_zfs_pool(devices,
 @click.option('--exec', 'exe', is_flag=True,)
 @click.option('--nomount', is_flag=True,)
 @click.option('--reservation', type=str,)
-@click.option('--verbose', type=str,)
-@click.option('--debug', type=str,)
+@click_add_options(click_global_options)
 @click.pass_context
 def create_zfs_filesystem(ctx,
                           pool: str,
@@ -386,9 +403,9 @@ def create_zfs_filesystem(ctx,
                           nfs_subnet: str,
                           exe: bool,
                           nomount: bool,
-                          verbose: bool,
-                          debug: bool,
-                          reservation: bool,
+                          verbose: int,
+                          verbose_inf: bool,
+                          reservation: str,
                           ) -> None:
 
     if verbose:
@@ -429,21 +446,20 @@ def create_zfs_filesystem(ctx,
                    filesystem=pool + '/' + name,
                    subnet=nfs_subnet,
                    verbose=verbose,
-                   debug=debug,
-                   simulate=simulate,)
+                                      simulate=simulate,)
 
 
 @cli.command()
 @click.argument('path', required=True, nargs=1)
 @click.option('--simulate', is_flag=True,)
-@click.option('--verbose', type=str,)
-@click.option('--debug', type=str,)
+@click_add_options(click_global_options)
 @click.pass_context
 def create_zfs_filesystem_snapshot(ctx,
+                                   *,
                                    path: str,
                                    simulate: bool,
-                                   verbose: bool,
-                                   debug: bool,
+                                   verbose: int,
+                                   verbose_inf: bool,
                                    ) -> None:
 
     if verbose:
@@ -470,15 +486,17 @@ def create_zfs_filesystem_snapshot(ctx,
 @click.option('--no-root-write', is_flag=True,)
 @click.option('--off', is_flag=True,)
 @click.option('--simulate', is_flag=True,)
-@click.option('--verbose', is_flag=True,)
-@click.option('--debug', is_flag=True,)
-def zfs_set_sharenfs(filesystem: str,
+@click_add_options(click_global_options)
+@click.pass_context
+def zfs_set_sharenfs(ctx,
+                     *,
+                     filesystem: str,
                      subnet: str,
                      off: bool,
                      no_root_write: bool,
                      simulate: bool,
-                     verbose: bool,
-                     debug: bool,
+                     verbose: int,
+                     verbose_inf: bool,
                      ):
 
     maxone([off, no_root_write])
