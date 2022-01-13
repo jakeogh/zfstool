@@ -388,6 +388,33 @@ def create_zfs_pool(ctx,
 @click.argument('pool', required=True, nargs=1)
 @click.argument('name', required=True, nargs=1)
 @click.option('--simulate', is_flag=True,)
+@click_add_options(click_global_options)
+@click.pass_context
+def zfs_filesystem_destroy(ctx,
+                           pool: str,
+                           name: str,
+                           simulate: bool,
+                           verbose: int,
+                           verbose_inf: bool,
+                           ) -> None:
+
+    if verbose:
+        ic()
+
+    assert '/' not in pool
+    assert not name.startswith('/')
+    assert len(pool.split()) == 1
+    assert len(name.split()) == 1
+    assert len(name) > 2
+    #todo check if mounted, need to get mountpoint= from zfs
+    sh.zfs.destroy(Path(pool) / Path(name), _fg=True)
+
+
+
+@cli.command()
+@click.argument('pool', required=True, nargs=1)
+@click.argument('name', required=True, nargs=1)
+@click.option('--simulate', is_flag=True,)
 @click.option('--encrypt', is_flag=True,)
 @click.option('--nfs-subnet', type=str,)
 @click.option('--exec', 'exe', is_flag=True,)
@@ -411,7 +438,7 @@ def create_zfs_filesystem(ctx,
     if verbose:
         ic()
 
-    assert not pool.startswith('/')
+    assert '/' not in pool
     assert not name.startswith('/')
     assert len(pool.split()) == 1
     assert len(name.split()) == 1
