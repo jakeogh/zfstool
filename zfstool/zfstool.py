@@ -130,7 +130,7 @@ def zfs_check_mountpoints(ctx,
 @click.pass_context
 def write_zfs_root_filesystem_on_devices(ctx,
                                          *,
-                                         devices: Iterable[Path, ...],
+                                         devices: tuple[Path],
                                          force: bool,
                                          raid: str,
                                          raid_group_size: int,
