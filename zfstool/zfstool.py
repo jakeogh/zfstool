@@ -20,7 +20,6 @@
 # pylint: disable=W0201  # attribute defined outside __init__
 # pylint: disable=R0916  # Too many boolean expressions in if statement
 # pylint: disable=C0305  # Trailing newlines editor should fix automatically, pointless warning
-# pylint: disable=C0413  # TEMP isort issue [wrong-import-position] Import "from pathlib import Path" should be placed at the top of the module [C0413]
 
 
 import os
@@ -165,7 +164,7 @@ def write_zfs_root_filesystem_on_devices(ctx,
 
     if len(devices) == 2:
         assert raid == 'mirror'
-        device_string = "mirror " + devices[0].as_posix() + ' ' + devices[1]
+        device_string = "mirror " + devices[0].as_posix() + ' ' + devices[1].as_posix()
 
     # striped mirror raid10
     if len(devices) > 2:
@@ -243,11 +242,7 @@ def write_zfs_root_filesystem_on_devices(ctx,
 @click.argument('devices',
                 required=True,
                 nargs=-1,
-                type=click.Path(exists=False,
-                                dir_okay=False,
-                                file_okay=True,
-                                allow_dash=False,
-                                path_type=Path,),
+                type=str,
                 )
 @click.option('--force', is_flag=True, required=False)
 @click.option('--simulate', is_flag=True, required=False)
@@ -261,7 +256,7 @@ def write_zfs_root_filesystem_on_devices(ctx,
 @click.pass_context
 def create_zfs_pool(ctx,
                     *,
-                    devices: Iterable[Path],
+                    devices: Iterable[str],
                     force: bool,
                     simulate: bool,
                     skip_checks: bool,
@@ -273,6 +268,13 @@ def create_zfs_pool(ctx,
                     verbose_inf: bool,
                     encrypt: bool,
                     ):
+
+    # needed for --simulate
+    devices_pathlib: tuple[Path, ...] = tuple([Path(_device) for _device in devices])
+    del devices
+    devices = devices_pathlib
+    del devices_pathlib
+
     if verbose:
         ic()
     assert ashift >= 9
@@ -290,7 +292,7 @@ def create_zfs_pool(ctx,
             assert path_is_block_special(device, follow_symlinks=True)
             assert not block_special_path_is_mounted(device, verbose=verbose, )
         if not (Path(device).name.startswith('nvme') or Path(device).name.startswith('mmcblk')):
-            assert not device[-1].isdigit()
+            assert not device.name[-1].isdigit()
 
     if not skip_checks:
         first_device_size = get_block_device_size(devices[0], verbose=verbose,)
@@ -303,7 +305,7 @@ def create_zfs_pool(ctx,
     device_string = ''
     if len(devices) == 1:
         assert raid == 'disk'
-        device_string = devices[0]
+        device_string = devices[0].as_posix()
 
     if len(devices) > 1:
         assert raid in ['mirror', 'raidz3']
@@ -312,7 +314,7 @@ def create_zfs_pool(ctx,
 
     if len(devices) == 2:
         assert raid == 'mirror'
-        device_string = "mirror " + devices[0] + ' ' + devices[1]
+        device_string = "mirror " + devices[0].as_posix() + ' ' + devices[1].as_posix()
 
     if len(devices) > 2:
         if raid_group_size == 2:  # striped mirror raid10
@@ -328,7 +330,7 @@ def create_zfs_pool(ctx,
             assert raid == 'raidz3'
             device_string = "raidz3"
             for device in devices:
-                device_string += " " + device
+                device_string += " " + device.as_posix()
             eprint("device_string:", device_string)
         else:
             print("unknown mode")
