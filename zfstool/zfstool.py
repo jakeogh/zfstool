@@ -40,14 +40,14 @@ from typing import Union
 
 import click
 import sh
-from asserttool import eprint
 from asserttool import ic
 from asserttool import maxone
-from asserttool import tv
 from clicktool import click_add_options
 from clicktool import click_global_options
+from clicktool import tv
 from devicetool import get_block_device_size
 from devicetool import path_is_block_special
+from eprint import eprint
 from inputtool import passphrase_prompt
 from itertool import grouper
 from mounttool import block_special_path_is_mounted
@@ -66,11 +66,11 @@ ASHIFT_HELP = '''9: 1<<9 == 512
 RAID_LIST = ['disk', 'mirror', 'raidz1', 'raidz2', 'raidz3', 'raidz10', 'raidz50', 'raidz60']
 
 
-@click.group()
+@click.group(no_args_is_help=True)
 @click_add_options(click_global_options)
 @click.pass_context
 def cli(ctx,
-        verbose: int,
+        verbose: Union[bool, int, float],
         verbose_inf: bool,
         ):
 
@@ -85,9 +85,13 @@ def cli(ctx,
 @click.pass_context
 def zfs_check_mountpoints(ctx,
                           *,
-                          verbose: int,
+                          verbose: Union[bool, int, float],
                           verbose_inf: bool,
                           ):
+    tty, verbose = tv(ctx=ctx,
+                      verbose=verbose,
+                      verbose_inf=verbose_inf,
+                      )
 
     mountpoints = sh.zfs.get('mountpoint')
     if verbose:
@@ -135,10 +139,14 @@ def write_zfs_root_filesystem_on_devices(ctx,
                                          raid_group_size: int,
                                          pool_name: str,
                                          mount_point: str,
-                                         verbose: int,
+                                         verbose: Union[bool, int, float],
                                          verbose_inf: bool,
                                          ):
 
+    tty, verbose = tv(ctx=ctx,
+                      verbose=verbose,
+                      verbose_inf=verbose_inf,
+                      )
     devices = tuple([Path(_device) for _device in devices])
 
     # https://raw.githubusercontent.com/ryao/zfs-overlay/master/zfs-install
@@ -264,10 +272,14 @@ def create_zfs_pool(ctx,
                     raid_group_size: int,
                     pool_name: str,
                     ashift: int,
-                    verbose: int,
+                    verbose: Union[bool, int, float],
                     verbose_inf: bool,
                     encrypt: bool,
                     ):
+    tty, verbose = tv(ctx=ctx,
+                      verbose=verbose,
+                      verbose_inf=verbose_inf,
+                      )
 
     # needed for --simulate
     devices_pathlib: tuple[Path, ...] = tuple([Path(_device) for _device in devices])
@@ -396,10 +408,14 @@ def zfs_filesystem_destroy(ctx,
                            pool: str,
                            name: str,
                            simulate: bool,
-                           verbose: int,
+                           verbose: Union[bool, int, float],
                            verbose_inf: bool,
                            ) -> None:
 
+    tty, verbose = tv(ctx=ctx,
+                      verbose=verbose,
+                      verbose_inf=verbose_inf,
+                      )
     if verbose:
         ic()
 
@@ -432,11 +448,15 @@ def create_zfs_filesystem(ctx,
                           nfs_subnet: str,
                           exe: bool,
                           nomount: bool,
-                          verbose: int,
+                          verbose: Union[bool, int, float],
                           verbose_inf: bool,
                           reservation: str,
                           ) -> None:
 
+    tty, verbose = tv(ctx=ctx,
+                      verbose=verbose,
+                      verbose_inf=verbose_inf,
+                      )
     if verbose:
         ic()
 
@@ -487,10 +507,14 @@ def create_zfs_filesystem_snapshot(ctx,
                                    *,
                                    path: str,
                                    simulate: bool,
-                                   verbose: int,
+                                   verbose: Union[bool, int, float],
                                    verbose_inf: bool,
                                    ) -> None:
 
+    tty, verbose = tv(ctx=ctx,
+                      verbose=verbose,
+                      verbose_inf=verbose_inf,
+                      )
     if verbose:
         ic()
 
@@ -524,10 +548,14 @@ def zfs_set_sharenfs(ctx,
                      off: bool,
                      no_root_write: bool,
                      simulate: bool,
-                     verbose: int,
+                     verbose: Union[bool, int, float],
                      verbose_inf: bool,
                      ):
 
+    tty, verbose = tv(ctx=ctx,
+                      verbose=verbose,
+                      verbose_inf=verbose_inf,
+                      )
     maxone([off, no_root_write])
 
     assert not filesystem.startswith('/')
