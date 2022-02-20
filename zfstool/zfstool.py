@@ -145,7 +145,18 @@ def zfs_check_mountpoints(
 @click.option("--raid", is_flag=False, required=True, type=click.Choice(RAID_LIST))
 @click.option("--raid-group-size", is_flag=False, required=True, type=int)
 @click.option("--pool-name", is_flag=False, required=True, type=str)
-@click.option("--mount-point", is_flag=False, required=True, type=str)
+@click.option(
+    "--mount-point",
+    is_flag=False,
+    required=True,
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        allow_dash=False,
+        path_type=Path,
+    ),
+)
 @click_add_options(click_global_options)
 @click.pass_context
 def write_zfs_root_filesystem_on_devices(
@@ -156,7 +167,7 @@ def write_zfs_root_filesystem_on_devices(
     raid: str,
     raid_group_size: int,
     pool_name: str,
-    mount_point: str,
+    mount_point: Path,
     verbose: Union[bool, int, float],
     verbose_inf: bool,
 ):
@@ -627,7 +638,7 @@ def create_zfs_filesystem_snapshot(
     assert len(path) > 3
 
     timestamp = str(int(float(get_timestamp())))
-    snapshot_path = path + "@__{timestamp}".format(timestamp=timestamp)
+    snapshot_path = path + f"@__{timestamp}"
     command = sh.zfs.snapshot.bake(snapshot_path)
 
     if verbose or simulate:
