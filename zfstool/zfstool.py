@@ -83,6 +83,7 @@ def cli(
     ctx,
     verbose: Union[bool, int, float],
     verbose_inf: bool,
+    dict_input: bool,
 ):
 
     tty, verbose = tv(
@@ -100,6 +101,7 @@ def zfs_check_mountpoints(
     *,
     verbose: Union[bool, int, float],
     verbose_inf: bool,
+    dict_input: bool,
 ):
     tty, verbose = tv(
         ctx=ctx,
@@ -115,7 +117,7 @@ def zfs_check_mountpoints(
         line = " ".join(line.split())
         if verbose:
             ic(line)
-        zfs_path = line.split(" mountpoint ")[0]
+        zfs_path = line.split(" mountpoint ", maxsplit=1)[0]
         mountpoint = line.split(" mountpoint ")[1]
         if mountpoint.startswith("none"):
             continue
@@ -170,6 +172,7 @@ def write_zfs_root_filesystem_on_devices(
     mount_point: Path,
     verbose: Union[bool, int, float],
     verbose_inf: bool,
+    dict_input: bool,
 ):
 
     tty, verbose = tv(
@@ -320,6 +323,7 @@ def create_zfs_pool(
     ashift: int,
     verbose: Union[bool, int, float],
     verbose_inf: bool,
+    dict_input: bool,
     encrypt: bool,
 ):
     tty, verbose = tv(
@@ -424,7 +428,7 @@ def create_zfs_pool(
             eprint("device_string:", device_string)
         else:
             print("unknown mode")
-            quit(1)
+            sys.exit(1)
 
     assert device_string != ""
     assert len(pool_name) > 2
@@ -497,6 +501,7 @@ def zfs_filesystem_destroy(
     simulate: bool,
     verbose: Union[bool, int, float],
     verbose_inf: bool,
+    dict_input: bool,
 ) -> None:
 
     tty, verbose = tv(
@@ -558,6 +563,7 @@ def create_zfs_filesystem(
     verbose: Union[bool, int, float],
     verbose_inf: bool,
     reservation: str,
+    dict_input: bool,
 ) -> None:
 
     tty, verbose = tv(
@@ -623,6 +629,7 @@ def create_zfs_filesystem_snapshot(
     simulate: bool,
     verbose: Union[bool, int, float],
     verbose_inf: bool,
+    dict_input: bool,
 ) -> None:
 
     tty, verbose = tv(
@@ -675,6 +682,7 @@ def zfs_set_sharenfs(
     simulate: bool,
     verbose: Union[bool, int, float],
     verbose_inf: bool,
+    dict_input: bool,
 ):
 
     tty, verbose = tv(
@@ -735,6 +743,10 @@ def zfs_set_sharenfs(
 
     zfs_command = sh.zfs.set.bake(sharenfs_line, filesystem)
     if simulate:
-        output(zfs_command, tty=tty, verbose=verbose)
+        output(
+            zfs_command, reason=None, dict_input=dict_input, tty=tty, verbose=verbose
+        )
     else:
-        output(zfs_command(), tty=tty, verbose=verbose)
+        output(
+            zfs_command(), reason=None, dict_input=dict_input, tty=tty, verbose=verbose
+        )
