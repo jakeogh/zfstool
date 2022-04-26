@@ -225,7 +225,7 @@ def write_zfs_root_filesystem_on_devices(
     -f \
     -o feature@async_destroy=enabled \
     -o feature@empty_bpobj=enabled \
-    -o feature@lz4_compress=enabled \
+    -o feature@zstd_compress=enabled \
     -o feature@spacemap_histogram=enabled \
     -o feature@extensible_dataset=enabled \
     -o feature@bookmarks=enabled \
@@ -233,7 +233,7 @@ def write_zfs_root_filesystem_on_devices(
     -o feature@embedded_data=enabled \
     -o cachefile='/tmp/zpool.cache'\
     -O atime=off \
-    -O compression=lz4 \
+    -O compression=zstd \
     -O copies=1 \
     -O xattr=sa \
     -O sharesmb=off \
