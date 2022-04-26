@@ -306,7 +306,7 @@ def write_zfs_root_filesystem_on_devices(
 @click.option("--raid", is_flag=False, required=True, type=click.Choice(RAID_LIST))
 @click.option("--raid-group-size", is_flag=False, required=True, type=int)
 @click.option("--pool-name", is_flag=False, required=True, type=str)
-@click.option("--ashift", is_flag=False, required=True, type=int, help=ASHIFT_HELP)
+@click.option("--ashift", is_flag=False, required=False, type=int, help=ASHIFT_HELP)
 @click.option("--encrypt", is_flag=True)
 @click_add_options(click_global_options)
 @click.pass_context
@@ -320,7 +320,7 @@ def create_zfs_pool(
     raid: str,
     raid_group_size: int,
     pool_name: str,
-    ashift: int,
+    ashift: Optional[int],
     verbose: Union[bool, int, float],
     verbose_inf: bool,
     dict_input: bool,
@@ -340,9 +340,10 @@ def create_zfs_pool(
 
     if verbose:
         ic()
-    assert ashift >= 9
-    assert ashift <= 16
-    eprint("using block size: {} (ashift={})".format(1 << ashift, ashift))
+    if ashift:
+        assert ashift >= 9
+        assert ashift <= 16
+        eprint("using block size: {} (ashift={})".format(1 << ashift, ashift))
 
     if skip_checks:
         assert simulate
@@ -454,7 +455,8 @@ def create_zfs_pool(
     command += " -o feature@embedded_data=enabled"  # default   # Blocks which compress very well use even less space.
     command += " -o feature@large_dnode=enabled"  # default   # Variable on-disk size of dnodes.
     command += " -o feature@large_blocks=enabled"  # default   # Support for blocks larger than 128KB.
-    command += " -o ashift={}".format(ashift)  #           #
+    if ashift:
+        command += f" -o ashift={ashift}"
     command += " -o listsnapshots=on"
 
     if encrypt:
