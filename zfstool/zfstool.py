@@ -272,13 +272,13 @@ def write_zfs_root_filesystem_on_devices(
     # zfs create -o mountpoint=/usr/portage/distfiles rpool/GENTOO/distfiles
 
     # Create portage build directory
-    # run_command("zfs create -o mountpoint=/var/tmp/portage -o compression=lz4 -o sync=disabled rpool/GENTOO/build-dir")
+    # run_command("zfs create -o mountpoint=/var/tmp/portage -o compression=zstd -o sync=disabled rpool/GENTOO/build-dir")
 
     # Create optional packages directory
     # zfs create -o mountpoint=/usr/portage/packages rpool/GENTOO/packages
 
     # Create optional ccache directory
-    # zfs create -o mountpoint=/var/tmp/ccache -o compression=lz4 rpool/GENTOO/ccache
+    # zfs create -o mountpoint=/var/tmp/ccache -o compression=zstd rpool/GENTOO/ccache
 
     # Set bootfs
     run_command(
@@ -447,7 +447,7 @@ def create_zfs_pool(
     command += (
         " -o feature@empty_bpobj=enabled"  # default   # Snapshots use less space.
     )
-    command += " -o feature@lz4_compress=enabled"  # default   # (independent of the zfs compression flag)
+    command += " -o feature@zstd_compress=enabled"  # default   # (independent of the zfs compression flag)
     command += " -o feature@spacemap_histogram=enabled"  # default   # Spacemaps maintain space histograms.
     command += " -o feature@extensible_dataset=enabled"  # default   # Enhanced dataset functionality.
     command += " -o feature@bookmarks=enabled"  # default   # "zfs bookmark" command
@@ -467,7 +467,7 @@ def create_zfs_pool(
         command += " -O pbkdf2iters=460000"
 
     command += " -O atime=off"  #           # (dont write when reading)
-    command += " -O compression=lz4"  #           # (better than lzjb)
+    command += " -O compression=zstd"  #           # (better than lzjb)
     command += " -O copies=1"  #
     command += " -O xattr=off"  #           # (sa is better than on)
     command += " -O sharesmb=off"  #
