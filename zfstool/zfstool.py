@@ -658,7 +658,8 @@ def create_zfs_filesystem_snapshot(
 
 
 @cli.command()
-@click.argument("filesystem", required=True, nargs=1)
+@click.argument("pool", required=True, nargs=1)
+@click.argument("name", required=True, nargs=1)
 @click.argument("subnet", required=True, nargs=1)
 @click.option(
     "--no-root-write",
@@ -677,7 +678,8 @@ def create_zfs_filesystem_snapshot(
 def zfs_set_sharenfs(
     ctx,
     *,
-    filesystem: str,
+    pool: str,
+    name: str,
     subnet: str,
     off: bool,
     no_root_write: bool,
@@ -693,6 +695,8 @@ def zfs_set_sharenfs(
         verbose_inf=verbose_inf,
     )
     maxone([off, no_root_write])
+
+    filesystem = pool + "/" + name
 
     assert not filesystem.startswith("/")
     assert len(filesystem.split()) == 1
@@ -727,6 +731,7 @@ def zfs_set_sharenfs(
     # these cause zfs set sharenfs= command to fail:
     # ['acl', 'no_pnfs']
 
+    assert "/" in subnet
     sharenfs_list.append("rw=" + subnet)
 
     if no_root_write:
