@@ -433,6 +433,7 @@ def create_zfs_pool(
             eprint("device_string:", device_string)
         else:
             if raid == "mirror":
+                device_string = "mirror"
                 for device in devices:
                     device_string += " " + device.as_posix()
                 eprint("device_string:", device_string)
