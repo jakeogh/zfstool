@@ -432,8 +432,13 @@ def create_zfs_pool(
                 device_string += " " + device.as_posix()
             eprint("device_string:", device_string)
         else:
-            print("unknown mode")
-            sys.exit(1)
+            if raid == "mirror":
+                for device in devices:
+                    device_string += " " + device.as_posix()
+                eprint("device_string:", device_string)
+            else:
+                print("unknown mode")
+                sys.exit(1)
 
     assert device_string != ""
     assert len(pool_name) > 2
