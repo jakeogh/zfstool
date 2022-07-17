@@ -393,8 +393,9 @@ def create_zfs_pool(
         device_string = devices[0].as_posix()
 
     if len(devices) > 1:
+        if raid in ["raidz3"]:
+            assert len(devices) % 2 == 0
         assert raid in ["mirror", "raidz3"]
-        assert len(devices) % 2 == 0
         assert raid_group_size >= 2
 
     if len(devices) == 2:
