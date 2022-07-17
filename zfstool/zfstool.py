@@ -2,7 +2,7 @@
 # -*- coding: utf8 -*-
 
 # flake8: noqa           # flake8 has no per file settings :(
-# pylint: disable=C0111  # docstrings are always outdated and wrong
+# pylint: disable=missing-docstring  # [C0111] docstrings are always outdated and wrong
 # pylint: disable=C0114  #      Missing module docstring (missing-module-docstring)
 # pylint: disable=W0511  # todo is encouraged
 # pylint: disable=C0301  # line too long
@@ -347,6 +347,9 @@ def create_zfs_pool(
 
     if skip_checks:
         assert simulate
+
+    if simulate:
+        skip_checks = True
 
     # https://raw.githubusercontent.com/ryao/zfs-overlay/master/zfs-install
     run_command(
