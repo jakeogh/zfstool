@@ -1,47 +1,39 @@
 #!/usr/bin/env python3
 # -*- coding: utf8 -*-
 
-# flake8: noqa           # flake8 has no per file settings :(
+
 # pylint: disable=missing-docstring  # [C0111] docstrings are always outdated and wrong
 # pylint: disable=C0114  #      Missing module docstring (missing-module-docstring)
-# pylint: disable=W0511  # todo is encouraged
-# pylint: disable=C0301  # line too long
-# pylint: disable=R0902  # too many instance attributes
-# pylint: disable=C0302  # too many lines in module
-# pylint: disable=C0103  # single letter var names, func name too descriptive
-# pylint: disable=R0911  # too many return statements
-# pylint: disable=R0912  # too many branches
-# pylint: disable=R0915  # too many statements
-# pylint: disable=R0913  # too many arguments
-# pylint: disable=R1702  # too many nested blocks
-# pylint: disable=R0914  # too many local variables
-# pylint: disable=R0903  # too few public methods
-# pylint: disable=E1101  # no member for base
-# pylint: disable=W0201  # attribute defined outside __init__
-# pylint: disable=R0916  # Too many boolean expressions in if statement
-# pylint: disable=C0305  # Trailing newlines editor should fix automatically, pointless warning
+# pylint: disable=fixme                           # [W0511] todo is encouraged
+# pylint: disable=line-too-long                   # [C0301]
+# pylint: disable=too-many-instance-attributes    # [R0902]
+# pylint: disable=too-many-lines                  # [C0302] too many lines in module
+# pylint: disable=invalid-name                    # [C0103] single letter var names, name too descriptive
+# pylint: disable=too-many-return-statements      # [R0911]
+# pylint: disable=too-many-branches               # [R0912]
+# pylint: disable=too-many-statements             # [R0915]
+# pylint: disable=too-many-arguments              # [R0913]
+# pylint: disable=too-many-nested-blocks          # [R1702]
+# pylint: disable=too-many-locals                 # [R0914]
+# pylint: disable=too-few-public-methods          # [R0903]
+# pylint: disable=no-member                       # [E1101] no member for base
+# pylint: disable=attribute-defined-outside-init  # [W0201]
+# pylint: disable=too-many-boolean-expressions    # [R0916] in if statement
+from __future__ import annotations
 
-
-import os
 import sys
-import time
+from collections.abc import Sequence
 from pathlib import Path
 from signal import SIG_DFL
 from signal import SIGPIPE
 from signal import signal
-from typing import ByteString
-from typing import Generator
 from typing import Iterable
-from typing import List
-from typing import Optional
-from typing import Sequence
-from typing import Tuple
-from typing import Union
 
 import click
 import sh
 from asserttool import ic
 from asserttool import maxone
+from click_auto_help import AHGroup
 from clicktool import click_add_options
 from clicktool import click_global_options
 from clicktool import tv
@@ -76,14 +68,14 @@ RAID_LIST = [
 ]
 
 
-@click.group(no_args_is_help=True)
+@click.group(no_args_is_help=True, cls=AHGroup)
 @click_add_options(click_global_options)
 @click.pass_context
 def cli(
     ctx,
-    verbose: Union[bool, int, float],
+    verbose: bool | int | float,
     verbose_inf: bool,
-    dict_input: bool,
+    dict_output: bool,
 ):
 
     tty, verbose = tv(
@@ -99,9 +91,9 @@ def cli(
 def zfs_check_mountpoints(
     ctx,
     *,
-    verbose: Union[bool, int, float],
+    verbose: bool | int | float,
     verbose_inf: bool,
-    dict_input: bool,
+    dict_output: bool,
 ):
     tty, verbose = tv(
         ctx=ctx,
@@ -170,9 +162,9 @@ def write_zfs_root_filesystem_on_devices(
     raid_group_size: int,
     pool_name: str,
     mount_point: Path,
-    verbose: Union[bool, int, float],
+    verbose: bool | int | float,
     verbose_inf: bool,
-    dict_input: bool,
+    dict_output: bool,
 ):
 
     tty, verbose = tv(
@@ -313,17 +305,17 @@ def write_zfs_root_filesystem_on_devices(
 def create_zfs_pool(
     ctx,
     *,
-    devices: Iterable[str],
+    devices: tuple[str],
     force: bool,
     simulate: bool,
     skip_checks: bool,
     raid: str,
     raid_group_size: int,
     pool_name: str,
-    ashift: Optional[int],
-    verbose: Union[bool, int, float],
+    ashift: None | int,
+    verbose: bool | int | float,
     verbose_inf: bool,
-    dict_input: bool,
+    dict_output: bool,
     encrypt: bool,
 ):
     tty, verbose = tv(
@@ -511,9 +503,9 @@ def zfs_filesystem_destroy(
     pool: str,
     name: str,
     simulate: bool,
-    verbose: Union[bool, int, float],
+    verbose: bool | int | float,
     verbose_inf: bool,
-    dict_input: bool,
+    dict_output: bool,
 ) -> None:
 
     tty, verbose = tv(
@@ -572,10 +564,10 @@ def create_zfs_filesystem(
     nfs_subnet: str,
     exe: bool,
     nomount: bool,
-    verbose: Union[bool, int, float],
+    verbose: bool | int | float,
     verbose_inf: bool,
     reservation: str,
-    dict_input: bool,
+    dict_output: bool,
 ) -> None:
 
     tty, verbose = tv(
@@ -639,9 +631,9 @@ def create_zfs_filesystem_snapshot(
     *,
     path: str,
     simulate: bool,
-    verbose: Union[bool, int, float],
+    verbose: bool | int | float,
     verbose_inf: bool,
-    dict_input: bool,
+    dict_output: bool,
 ) -> None:
 
     tty, verbose = tv(
@@ -694,9 +686,9 @@ def zfs_set_sharenfs(
     off: bool,
     no_root_write: bool,
     simulate: bool,
-    verbose: Union[bool, int, float],
+    verbose: bool | int | float,
     verbose_inf: bool,
-    dict_input: bool,
+    dict_output: bool,
 ):
 
     tty, verbose = tv(
@@ -761,9 +753,13 @@ def zfs_set_sharenfs(
     zfs_command = sh.zfs.set.bake(sharenfs_line, filesystem)
     if simulate:
         output(
-            zfs_command, reason=None, dict_input=dict_input, tty=tty, verbose=verbose
+            zfs_command, reason=None, dict_output=dict_output, tty=tty, verbose=verbose
         )
     else:
         output(
-            zfs_command(), reason=None, dict_input=dict_input, tty=tty, verbose=verbose
+            zfs_command(),
+            reason=None,
+            dict_output=dict_output,
+            tty=tty,
+            verbose=verbose,
         )
