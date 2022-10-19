@@ -27,7 +27,6 @@ from pathlib import Path
 from signal import SIG_DFL
 from signal import SIGPIPE
 from signal import signal
-from typing import Iterable
 
 import click
 import sh
