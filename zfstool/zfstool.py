@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
 from pathlib import Path
 from signal import SIG_DFL
 from signal import SIGPIPE
@@ -72,9 +71,9 @@ RAID_LIST = [
 @click.pass_context
 def cli(
     ctx,
-    verbose: bool | int | float,
     verbose_inf: bool,
     dict_output: bool,
+    verbose: bool | int | float = False,
 ):
 
     tty, verbose = tv(
@@ -90,9 +89,9 @@ def cli(
 def zfs_check_mountpoints(
     ctx,
     *,
-    verbose: bool | int | float,
     verbose_inf: bool,
     dict_output: bool,
+    verbose: bool | int | float = False,
 ):
     tty, verbose = tv(
         ctx=ctx,
@@ -101,13 +100,11 @@ def zfs_check_mountpoints(
     )
 
     mountpoints = sh.zfs.get("mountpoint")
-    if verbose:
-        ic(mountpoints)
+    ic(mountpoints)
 
     for line in mountpoints.splitlines()[1:]:
         line = " ".join(line.split())
-        if verbose:
-            ic(line)
+        ic(line)
         zfs_path = line.split(" mountpoint ", maxsplit=1)[0]
         mountpoint = line.split(" mountpoint ")[1]
         if mountpoint.startswith("none"):
@@ -161,9 +158,9 @@ def write_zfs_root_filesystem_on_devices(
     raid_group_size: int,
     pool_name: str,
     mount_point: Path,
-    verbose: bool | int | float,
     verbose_inf: bool,
     dict_output: bool,
+    verbose: bool | int | float = False,
 ):
 
     tty, verbose = tv(
@@ -180,7 +177,6 @@ def write_zfs_root_filesystem_on_devices(
         assert path_is_block_special(device)
         assert not block_special_path_is_mounted(
             device,
-            verbose=verbose,
         )
         if not Path(device).name.startswith("nvme"):
             assert not device.name[-1].isdigit()
@@ -210,6 +206,7 @@ def write_zfs_root_filesystem_on_devices(
 
     assert len(pool_name) > 2
 
+    # -o feature@filesystem_limits=enabled \
     zpool_command = (
         """
     zpool create \
@@ -218,10 +215,12 @@ def write_zfs_root_filesystem_on_devices(
     -o feature@empty_bpobj=enabled \
     -o feature@zstd_compress=enabled \
     -o feature@spacemap_histogram=enabled \
-    -o feature@extensible_dataset=enabled \
     -o feature@bookmarks=enabled \
-    -o feature@enabled_txg=enabled \
+    -o feature@bookmark_v2=enabled \
     -o feature@embedded_data=enabled \
+    -o feature@empty_bpobj=enabled \
+    -o feature@enabled_txg=enabled \
+    -o feature@extensible_dataset=enabled \
     -o cachefile='/tmp/zpool.cache'\
     -O atime=off \
     -O compression=zstd \
@@ -242,10 +241,6 @@ def write_zfs_root_filesystem_on_devices(
     )
 
     run_command(zpool_command, verbose=True)
-
-    # Workaround 0.6.4 regression
-    # run_command("zfs umount /mnt/gentoo/rpool")
-    # run_command("rmdir /mnt/gentoo/rpool")
 
     # Create rootfs
     run_command("zfs create -o mountpoint=none " + pool_name + "/ROOT", verbose=True)
@@ -312,10 +307,10 @@ def create_zfs_pool(
     raid_group_size: int,
     pool_name: str,
     ashift: None | int,
-    verbose: bool | int | float,
     verbose_inf: bool,
     dict_output: bool,
     encrypt: bool,
+    verbose: bool | int | float = False,
 ):
     tty, verbose = tv(
         ctx=ctx,
@@ -329,8 +324,6 @@ def create_zfs_pool(
     devices = devices_pathlib
     del devices_pathlib
 
-    if verbose:
-        ic()
     if ashift:
         assert ashift >= 9
         assert ashift <= 16
@@ -353,7 +346,6 @@ def create_zfs_pool(
             assert path_is_block_special(device, follow_symlinks=True)
             assert not block_special_path_is_mounted(
                 device,
-                verbose=verbose,
             )
         if not (
             Path(device).name.startswith("nvme")
@@ -364,13 +356,11 @@ def create_zfs_pool(
     if not skip_checks:
         first_device_size = get_block_device_size(
             devices[0],
-            verbose=verbose,
         )
         for device in devices:
             assert (
                 get_block_device_size(
                     device,
-                    verbose=verbose,
                 )
                 == first_device_size
             )
@@ -439,7 +429,6 @@ def create_zfs_pool(
         if not simulate:
             passphrase = passphrase_prompt(
                 "zpool",
-                verbose=verbose,
             )
             passphrase = passphrase.decode("utf8")
 
@@ -450,12 +439,15 @@ def create_zfs_pool(
     )
     command += " -o feature@zstd_compress=enabled"  # default   # (independent of the zfs compression flag)
     command += " -o feature@spacemap_histogram=enabled"  # default   # Spacemaps maintain space histograms.
+    command += " -o feature@spacemap_v2=enabled"  # default
     command += " -o feature@extensible_dataset=enabled"  # default   # Enhanced dataset functionality.
     command += " -o feature@bookmarks=enabled"  # default   # "zfs bookmark" command
+    command += " -o feature@bookmark_v2=enabled"  # default
     command += " -o feature@enabled_txg=enabled"  # default   # Record txg at which a feature is enabled
     command += " -o feature@embedded_data=enabled"  # default   # Blocks which compress very well use even less space.
     command += " -o feature@large_dnode=enabled"  # default   # Variable on-disk size of dnodes.
     command += " -o feature@large_blocks=enabled"  # default   # Support for blocks larger than 128KB.
+    command += " -o feature@zpool_checkpoint=enabled"  # default
     if ashift:
         command += f" -o ashift={ashift}"
     command += " -o listsnapshots=on"
@@ -502,9 +494,9 @@ def zfs_filesystem_destroy(
     pool: str,
     name: str,
     simulate: bool,
-    verbose: bool | int | float,
     verbose_inf: bool,
     dict_output: bool,
+    verbose: bool | int | float = False,
 ) -> None:
 
     tty, verbose = tv(
@@ -512,8 +504,6 @@ def zfs_filesystem_destroy(
         verbose=verbose,
         verbose_inf=verbose_inf,
     )
-    if verbose:
-        ic()
 
     assert "/" not in pool
     assert not name.startswith("/")
@@ -563,10 +553,10 @@ def create_zfs_filesystem(
     nfs_subnet: str,
     exe: bool,
     nomount: bool,
-    verbose: bool | int | float,
     verbose_inf: bool,
     reservation: str,
     dict_output: bool,
+    verbose: bool | int | float = False,
 ) -> None:
 
     tty, verbose = tv(
@@ -612,7 +602,6 @@ def create_zfs_filesystem(
             zfs_set_sharenfs,
             filesystem=pool + "/" + name,
             subnet=nfs_subnet,
-            verbose=verbose,
             simulate=simulate,
         )
 
@@ -630,9 +619,9 @@ def create_zfs_filesystem_snapshot(
     *,
     path: str,
     simulate: bool,
-    verbose: bool | int | float,
     verbose_inf: bool,
     dict_output: bool,
+    verbose: bool | int | float = False,
 ) -> None:
 
     tty, verbose = tv(
@@ -640,8 +629,6 @@ def create_zfs_filesystem_snapshot(
         verbose=verbose,
         verbose_inf=verbose_inf,
     )
-    if verbose:
-        ic()
 
     assert not path.startswith("/")
     assert len(path.split()) == 1
@@ -685,9 +672,9 @@ def zfs_set_sharenfs(
     off: bool,
     no_root_write: bool,
     simulate: bool,
-    verbose: bool | int | float,
     verbose_inf: bool,
     dict_output: bool,
+    verbose: bool | int | float = False,
 ):
 
     tty, verbose = tv(
@@ -752,7 +739,10 @@ def zfs_set_sharenfs(
     zfs_command = sh.zfs.set.bake(sharenfs_line, filesystem)
     if simulate:
         output(
-            zfs_command, reason=None, dict_output=dict_output, tty=tty, verbose=verbose
+            zfs_command,
+            reason=None,
+            dict_output=dict_output,
+            tty=tty,
         )
     else:
         output(
@@ -760,5 +750,4 @@ def zfs_set_sharenfs(
             reason=None,
             dict_output=dict_output,
             tty=tty,
-            verbose=verbose,
         )
