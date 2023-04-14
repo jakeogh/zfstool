@@ -75,7 +75,6 @@ def cli(
     dict_output: bool,
     verbose: bool | int | float = False,
 ):
-
     tty, verbose = tv(
         ctx=ctx,
         verbose=verbose,
@@ -152,7 +151,7 @@ def zfs_check_mountpoints(
 def write_zfs_root_filesystem_on_devices(
     ctx,
     *,
-    devices: tuple[Path],
+    devices: tuple[Path, ...],
     force: bool,
     raid: str,
     raid_group_size: int,
@@ -162,7 +161,6 @@ def write_zfs_root_filesystem_on_devices(
     dict_output: bool,
     verbose: bool | int | float = False,
 ):
-
     tty, verbose = tv(
         ctx=ctx,
         verbose=verbose,
@@ -299,7 +297,7 @@ def write_zfs_root_filesystem_on_devices(
 def create_zfs_pool(
     ctx,
     *,
-    devices: tuple[str],
+    devices: tuple[str, ...],
     force: bool,
     simulate: bool,
     skip_checks: bool,
@@ -498,7 +496,6 @@ def zfs_filesystem_destroy(
     dict_output: bool,
     verbose: bool | int | float = False,
 ) -> None:
-
     tty, verbose = tv(
         ctx=ctx,
         verbose=verbose,
@@ -558,7 +555,6 @@ def create_zfs_filesystem(
     dict_output: bool,
     verbose: bool | int | float = False,
 ) -> None:
-
     tty, verbose = tv(
         ctx=ctx,
         verbose=verbose,
@@ -623,7 +619,6 @@ def create_zfs_filesystem_snapshot(
     dict_output: bool,
     verbose: bool | int | float = False,
 ) -> None:
-
     tty, verbose = tv(
         ctx=ctx,
         verbose=verbose,
@@ -676,7 +671,6 @@ def zfs_set_sharenfs(
     dict_output: bool,
     verbose: bool | int | float = False,
 ):
-
     tty, verbose = tv(
         ctx=ctx,
         verbose=verbose,
