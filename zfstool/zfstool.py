@@ -405,8 +405,12 @@ def create_zfs_pool(
                 )
                 eprint("device_string:", device_string)
         elif raid_group_size in [8, 16]:
-            assert raid == "raidz3"
-            device_string = "raidz3"
+            assert raid in ["raidz3", "mirror"]
+            if raid == "raidz3":
+                device_string = "raidz3"
+            elif raid == "mirror":
+                device_string = "mirror"
+
             for device in devices:
                 device_string += " " + device.as_posix()
             eprint("device_string:", device_string)
