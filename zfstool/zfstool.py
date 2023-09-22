@@ -348,6 +348,7 @@ def create_zfs_pool(
         if not (
             Path(device).name.startswith("nvme")
             or Path(device).name.startswith("mmcblk")
+            or Path(device).name.startswith("wwn-")
         ):
             assert not device.name[-1].isdigit()
 
