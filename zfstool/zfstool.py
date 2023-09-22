@@ -601,7 +601,8 @@ def create_zfs_filesystem(
     if nfs_subnet:
         ctx.invoke(
             zfs_set_sharenfs,
-            filesystem=pool + "/" + name,
+            pool=pool,
+            name=name,
             subnet=nfs_subnet,
             simulate=simulate,
         )
