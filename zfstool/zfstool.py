@@ -595,8 +595,12 @@ def create_zfs_filesystem(
         command += " -o encryption=aes-256-gcm"
         command += " -o keyformat=passphrase"
         command += " -o keylocation=prompt"
-    if not exe:
+
+    if exe:
+        command += " -o exec=on"
+    else:
         command += " -o exec=off"
+
     if reservation:
         command += " -o reservation=" + reservation
 
