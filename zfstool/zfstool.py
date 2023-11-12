@@ -443,21 +443,25 @@ def create_zfs_pool(
             passphrase = passphrase.decode("utf8")
 
     command = "zpool create"
-    command += " -o feature@async_destroy=enabled"  # default   # Destroy filesystems asynchronously.
-    command += (
-        " -o feature@empty_bpobj=enabled"  # default   # Snapshots use less space.
-    )
-    command += " -o feature@zstd_compress=enabled"  # default   # (independent of the zfs compression flag)
+    command += " -o feature@async_destroy=enabled"  # default Destroy filesystems asynchronously.
+    command += " -o feature@blake3=enabled"
+    command += " -o feature@block_cloning=enabled"
+    command += " -o feature@bookmarks=enabled"  # default "zfs bookmark" command
+    command += " -o feature@bookmark_v2=enabled"  # default
+    command += " -o feature@device_rebuild=enabled"
+    command += " -o feature@embedded_data=enabled"  # default Blocks which compress very well use even less space.
+    command += " -o feature@empty_bpobj=enabled"  # default Snapshots use less space.
+    command += " -o feature@enabled_txg=enabled"  # default   # Record txg at which a feature is enabled
+    command += " -o feature@extensible_dataset=enabled"  # default   # Enhanced dataset functionality.
+    command += " -o feature@head_errlog=enabled"
     command += " -o feature@spacemap_histogram=enabled"  # default   # Spacemaps maintain space histograms.
     command += " -o feature@spacemap_v2=enabled"  # default
-    command += " -o feature@extensible_dataset=enabled"  # default   # Enhanced dataset functionality.
-    command += " -o feature@bookmarks=enabled"  # default   # "zfs bookmark" command
-    command += " -o feature@bookmark_v2=enabled"  # default
-    command += " -o feature@enabled_txg=enabled"  # default   # Record txg at which a feature is enabled
-    command += " -o feature@embedded_data=enabled"  # default   # Blocks which compress very well use even less space.
-    command += " -o feature@large_dnode=enabled"  # default   # Variable on-disk size of dnodes.
-    command += " -o feature@large_blocks=enabled"  # default   # Support for blocks larger than 128KB.
     command += " -o feature@zpool_checkpoint=enabled"  # default
+    command += (
+        " -o feature@large_dnode=enabled"  # default  Variable on-disk size of dnodes.
+    )
+    command += " -o feature@large_blocks=enabled"  # default  Support for blocks larger than 128KB.
+    command += " -o feature@zstd_compress=enabled"  # default (independent of the zfs compression flag)
     if ashift:
         command += f" -o ashift={ashift}"
     command += " -o listsnapshots=on"
@@ -467,15 +471,17 @@ def create_zfs_pool(
         command += " -O encryption=aes-256-gcm"
         command += " -O keyformat=passphrase"
         command += " -O keylocation=prompt"
-        command += " -O pbkdf2iters=460000"
+        command += " -O pbkdf2iters=560000"
+        command += " -O checksum=blake3"
+    else:
+        command += " -O checksum=fletcher4"  # default
 
-    command += " -O atime=off"  #           # (dont write when reading)
-    command += " -O compression=zstd"  #           # (better than lzjb)
-    command += " -O copies=1"  #
-    command += " -O xattr=off"  #           # (sa is better than on)
-    command += " -O sharesmb=off"  #
-    command += " -O sharenfs=off"  #
-    command += " -O checksum=fletcher4"  # default
+    command += " -O atime=off"  # (dont write when reading)
+    command += " -O compression=zstd"  # (better than lzjb)
+    command += " -O copies=1"
+    command += " -O xattr=off"  # (sa is better than on)
+    command += " -O sharesmb=off"
+    command += " -O sharenfs=off"
     command += " -O dedup=off"  # default
     command += " -O utf8only=off"  # default
     command += " -O mountpoint=none"  # dont mount raw zpools
