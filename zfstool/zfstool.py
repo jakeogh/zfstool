@@ -73,7 +73,7 @@ def cli(
     ctx,
     verbose_inf: bool,
     dict_output: bool,
-    verbose: bool = False,
+    verbose: bool | int | float = False,
 ):
     tty, verbose = tv(
         ctx=ctx,
@@ -90,7 +90,7 @@ def zfs_check_mountpoints(
     *,
     verbose_inf: bool,
     dict_output: bool,
-    verbose: bool = False,
+    verbose: bool | int | float = False,
 ):
     tty, verbose = tv(
         ctx=ctx,
@@ -159,7 +159,7 @@ def write_zfs_root_filesystem_on_devices(
     mount_point: Path,
     verbose_inf: bool,
     dict_output: bool,
-    verbose: bool = False,
+    verbose: bool | int | float = False,
 ):
     tty, verbose = tv(
         ctx=ctx,
@@ -210,15 +210,22 @@ def write_zfs_root_filesystem_on_devices(
     zpool create \
     -f \
     -o feature@async_destroy=enabled \
-    -o feature@empty_bpobj=enabled \
-    -o feature@zstd_compress=enabled \
-    -o feature@spacemap_histogram=enabled \
+    -o feature@blake3=enabled \
+    -o feature@block_cloning=enabled \
     -o feature@bookmarks=enabled \
     -o feature@bookmark_v2=enabled \
+    -o feature@bookmark_written=enabled \
+    -o feature@device_rebuild=enabled \
     -o feature@embedded_data=enabled \
     -o feature@empty_bpobj=enabled \
     -o feature@enabled_txg=enabled \
+    -o feature@encryption=enabled \
     -o feature@extensible_dataset=enabled \
+    -o feature@head_errlog=enabled \
+    -o feature@spacemap_histogram=enabled \
+    -o feature@spacemap_v2=enabled \
+    -o feature@zpool_checkpoint=enabled \
+    -o feature@zstd_compress=enabled \
     -o cachefile='/tmp/zpool.cache'\
     -O atime=off \
     -O compression=zstd \
@@ -226,7 +233,7 @@ def write_zfs_root_filesystem_on_devices(
     -O xattr=sa \
     -O sharesmb=off \
     -O sharenfs=off \
-    -O checksum=fletcher4 \
+    -O checksum=blake3 \
     -O dedup=off \
     -O utf8only=off \
     -m none \
@@ -308,7 +315,7 @@ def create_zfs_pool(
     verbose_inf: bool,
     dict_output: bool,
     encrypt: bool,
-    verbose: bool = False,
+    verbose: bool | int | float = False,
 ):
     tty, verbose = tv(
         ctx=ctx,
@@ -499,7 +506,7 @@ def zfs_filesystem_destroy(
     simulate: bool,
     verbose_inf: bool,
     dict_output: bool,
-    verbose: bool = False,
+    verbose: bool | int | float = False,
 ) -> None:
     tty, verbose = tv(
         ctx=ctx,
@@ -558,7 +565,7 @@ def create_zfs_filesystem(
     verbose_inf: bool,
     reservation: str,
     dict_output: bool,
-    verbose: bool = False,
+    verbose: bool | int | float = False,
 ) -> None:
     tty, verbose = tv(
         ctx=ctx,
@@ -623,7 +630,7 @@ def create_zfs_filesystem_snapshot(
     simulate: bool,
     verbose_inf: bool,
     dict_output: bool,
-    verbose: bool = False,
+    verbose: bool | int | float = False,
 ) -> None:
     tty, verbose = tv(
         ctx=ctx,
@@ -675,7 +682,7 @@ def zfs_set_sharenfs(
     simulate: bool,
     verbose_inf: bool,
     dict_output: bool,
-    verbose: bool = False,
+    verbose: bool | int | float = False,
 ):
     tty, verbose = tv(
         ctx=ctx,
