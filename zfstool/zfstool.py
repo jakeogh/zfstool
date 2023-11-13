@@ -72,10 +72,14 @@ RAID_LIST = [
 
 
 def zpool_is_imported(zpool: str):
-    _result = sh.zpool("list").splitlines()
+    _result = sh.zpool("list").splitlines()[1:]
     for _ in _result:
         _ = _.strip()
-        icp(_)
+        _pool = _.split(" ")[0]
+        icp(_pool)
+        if _pool == zpool:
+            return True
+    return False
 
 
 @click.group(no_args_is_help=True, cls=AHGroup)
