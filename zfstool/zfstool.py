@@ -72,7 +72,8 @@ RAID_LIST = [
 
 
 def zpool_is_imported(zpool: str):
-    for _ in sh.zpool("list"):
+    _result = sh.zpool("list").splitlines()
+    for _ in _result:
         _ = _.strip()
         icp(_)
 
