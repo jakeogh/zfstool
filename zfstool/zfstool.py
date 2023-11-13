@@ -33,6 +33,7 @@ from signal import signal
 import click
 import sh
 from asserttool import ic
+from asserttool import icp
 from asserttool import maxone
 from click_auto_help import AHGroup
 from clicktool import click_add_options
@@ -68,6 +69,12 @@ RAID_LIST = [
     "raidz50",
     "raidz60",
 ]
+
+
+def zpool_is_imported(zpool: str):
+    for _ in sh.zpool("list"):
+        _ = _.strip()
+        icp(_)
 
 
 @click.group(no_args_is_help=True, cls=AHGroup)
