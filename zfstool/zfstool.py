@@ -358,8 +358,8 @@ def create_zfs_pool(
         assert ashift <= 16
         eprint("using block size: {} (ashift={})".format(1 << ashift, ashift))
 
-    if skip_checks:
-        assert simulate
+    # if skip_checks:
+    #    assert simulate
 
     if simulate:
         skip_checks = True
