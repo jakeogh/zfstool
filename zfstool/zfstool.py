@@ -365,17 +365,12 @@ def create_zfs_pool(
         skip_checks = True
 
     # https://raw.githubusercontent.com/ryao/zfs-overlay/master/zfs-install
-    run_command(
-        "modprobe zfs || exit 1",
-        verbose=verbose,
-    )
+    run_command("modprobe zfs || exit 1")
 
     for device in devices:
         if not skip_checks:
             assert path_is_block_special(device, follow_symlinks=True)
-            assert not block_special_path_is_mounted(
-                device,
-            )
+            assert not block_special_path_is_mounted(device)
         if not (
             Path(device).name.startswith("nvme")
             or Path(device).name.startswith("mmcblk")
@@ -512,7 +507,7 @@ def create_zfs_pool(
     command += " -O setuid=off"  # only needed on rootfs
     command += " " + pool_name + " " + device_string
 
-    ic(command)
+    icp(command)
     if not simulate:
         # stdin = None
         # if encrypt:
