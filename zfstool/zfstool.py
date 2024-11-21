@@ -194,7 +194,7 @@ def write_zfs_root_filesystem_on_devices(
     run_command("modprobe zfs || exit 1", verbose=True)
 
     for device in devices:
-        assert path_is_block_special(device)
+        assert path_is_block_special(device, symlink_ok=True)
         assert not block_special_path_is_mounted(
             device,
         )
@@ -369,7 +369,7 @@ def create_zfs_pool(
 
     for device in devices:
         if not skip_checks:
-            assert path_is_block_special(device, follow_symlinks=True)
+            assert path_is_block_special(device, symlink_ok=True)
             assert not block_special_path_is_mounted(device)
         if not (
             Path(device).name.startswith("nvme")
