@@ -607,7 +607,7 @@ def create_zfs_filesystem(
     assert not name.startswith("/")
     assert len(pool.split()) == 1
     assert len(name.split()) == 1
-    assert len(name) > 2
+    assert len(name) > 1
 
     # https://raw.githubusercontent.com/ryao/zfs-overlay/master/zfs-install
     # run_command("modprobe zfs || exit 1")
