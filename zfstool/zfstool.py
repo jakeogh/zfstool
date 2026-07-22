@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-# -*- coding: utf8 -*-
-
-from __future__ import annotations
 
 import os
-import sys
+import shutil
 from pathlib import Path
 from signal import SIG_DFL
 from signal import SIGPIPE
 from signal import signal
 
 import click
-import sh
+import hs
 from asserttool import ic
 from asserttool import icp
 from asserttool import maxone
@@ -23,21 +20,21 @@ from devicetool import get_block_device_size
 from devicetool import path_is_block_special
 from eprint import eprint
 from globalverbose import gvd
-from inputtool import passphrase_prompt
 from itertool import grouper
 from mounttool import block_special_path_is_mounted
 from mptool import output
-from run_command import run_command
 from timestamptool import get_timestamp
 
 signal(SIGPIPE, SIG_DFL)
+
+_zfs = hs.Command("zfs")
+_zpool = hs.Command("zpool")
 
 ASHIFT_HELP = """9: 1<<9 == 512
 10: 1<<10 == 1024
 11: 1<<11 == 2048
 12: 1<<12 == 4096
 13: 1<<13 == 8192"""
-
 
 RAID_LIST = [
     "disk",
@@ -51,11 +48,9 @@ RAID_LIST = [
 ]
 
 
-def zpool_is_imported(zpool: str):
-    _result = sh.zpool("list").splitlines()[1:]
-    for _ in _result:
-        _ = _.strip()
-        _pool = _.split(" ")[0]
+def zpool_is_imported(zpool: str) -> bool:
+    for line in str(_zpool("list")).splitlines()[1:]:
+        _pool = line.strip().split(" ")[0]
         icp(_pool)
         if _pool == zpool:
             return True
@@ -66,11 +61,11 @@ def zpool_is_imported(zpool: str):
 @click_add_options(click_global_options)
 @click.pass_context
 def cli(
-    ctx,
+    ctx: click.Context,
     verbose_inf: bool,
     dict_output: bool,
     verbose: bool = False,
-):
+) -> None:
     tty, verbose = tvicgvd(
         ctx=ctx,
         verbose=verbose,
@@ -84,12 +79,12 @@ def cli(
 @click_add_options(click_global_options)
 @click.pass_context
 def zfs_check_mountpoints(
-    ctx,
+    ctx: click.Context,
     *,
     verbose_inf: bool,
     dict_output: bool,
     verbose: bool = False,
-):
+) -> None:
     tty, verbose = tvicgvd(
         ctx=ctx,
         verbose=verbose,
@@ -98,7 +93,7 @@ def zfs_check_mountpoints(
         gvd=gvd,
     )
 
-    mountpoints = sh.zfs.get("mountpoint")
+    mountpoints = str(_zfs("get", "mountpoint"))
     ic(mountpoints)
 
     for line in mountpoints.splitlines()[1:]:
@@ -164,7 +159,7 @@ def zfs_check_mountpoints(
 @click_add_options(click_global_options)
 @click.pass_context
 def write_zfs_root_filesystem_on_devices(
-    ctx,
+    ctx: click.Context,
     *,
     devices: tuple[Path, ...],
     force: bool,
@@ -175,7 +170,7 @@ def write_zfs_root_filesystem_on_devices(
     verbose_inf: bool,
     dict_output: bool,
     verbose: bool = False,
-):
+) -> None:
     tty, verbose = tvicgvd(
         ctx=ctx,
         verbose=verbose,
@@ -183,122 +178,83 @@ def write_zfs_root_filesystem_on_devices(
         ic=ic,
         gvd=gvd,
     )
-    devices = tuple([Path(_device) for _device in devices])
+    devices = tuple(Path(_device) for _device in devices)
 
     # https://raw.githubusercontent.com/ryao/zfs-overlay/master/zfs-install
-    run_command("modprobe zfs || exit 1", verbose=True)
+    hs.Command("modprobe")("zfs")
 
     for device in devices:
         assert path_is_block_special(device, symlink_ok=True)
-        assert not block_special_path_is_mounted(
-            device,
-        )
-        if not Path(device).name.startswith("nvme"):
+        assert not block_special_path_is_mounted(device)
+        if not device.name.startswith("nvme"):
             assert not device.name[-1].isdigit()
 
-    # assert raid_group_size >= 2
     assert len(devices) >= raid_group_size
-
-    device_string = ""
-    if len(devices) == 1:
-        assert raid == "disk"
-        device_string = devices[0].as_posix()
-
-    if len(devices) > 1:
-        assert raid == "mirror"
-        assert len(devices) % 2 == 0
-
-    if len(devices) == 2:
-        assert raid == "mirror"
-        device_string = "mirror " + devices[0].as_posix() + " " + devices[1].as_posix()
-
-    # striped mirror raid10
-    if len(devices) > 2:
-        for pair in grouper(devices, raid_group_size):
-            device_string = device_string + "mirror " + pair[0] + " " + pair[1] + " "
-            eprint("device_string:", device_string)
-    assert device_string != ""
-
     assert len(pool_name) > 2
 
-    # -o feature@filesystem_limits=enabled \
-    zpool_command = (
-        """
-    zpool create \
-    -f \
-    -o feature@async_destroy=enabled \
-    -o feature@blake3=enabled \
-    -o feature@block_cloning=enabled \
-    -o feature@bookmarks=enabled \
-    -o feature@bookmark_v2=enabled \
-    -o feature@bookmark_written=enabled \
-    -o feature@device_rebuild=enabled \
-    -o feature@embedded_data=enabled \
-    -o feature@empty_bpobj=enabled \
-    -o feature@enabled_txg=enabled \
-    -o feature@encryption=enabled \
-    -o feature@extensible_dataset=enabled \
-    -o feature@head_errlog=enabled \
-    -o feature@spacemap_histogram=enabled \
-    -o feature@spacemap_v2=enabled \
-    -o feature@zpool_checkpoint=enabled \
-    -o feature@zstd_compress=enabled \
-    -o cachefile='/tmp/zpool.cache'\
-    -O atime=off \
-    -O compression=zstd \
-    -O copies=1 \
-    -O xattr=sa \
-    -O sharesmb=off \
-    -O sharenfs=off \
-    -O checksum=blake3 \
-    -O dedup=off \
-    -O utf8only=off \
-    -m none \
-    -R """
-        + mount_point.as_posix()
-        + " "
-        + pool_name
-        + " "
-        + device_string
-    )
+    vdev: list[str] = []
+    if len(devices) == 1:
+        assert raid == "disk"
+        vdev = [devices[0].as_posix()]
+    elif len(devices) == 2:
+        assert raid == "mirror"
+        vdev = ["mirror", devices[0].as_posix(), devices[1].as_posix()]
+    else:  # striped mirror raid10
+        assert raid == "mirror"
+        assert len(devices) % 2 == 0
+        for group in grouper(devices, raid_group_size):
+            vdev.append("mirror")
+            vdev.extend(Path(_).as_posix() for _ in group)
+            eprint("vdev:", vdev)
+    assert vdev
 
-    run_command(zpool_command, verbose=True)
+    zpool_create_args = ["create", "-f"]
+    for feature in (
+        "async_destroy",
+        "blake3",
+        "block_cloning",
+        "bookmarks",
+        "bookmark_v2",
+        "bookmark_written",
+        "device_rebuild",
+        "embedded_data",
+        "empty_bpobj",
+        "enabled_txg",
+        "encryption",
+        "extensible_dataset",
+        "head_errlog",
+        "spacemap_histogram",
+        "spacemap_v2",
+        "zpool_checkpoint",
+        "zstd_compress",
+    ):
+        zpool_create_args += ["-o", f"feature@{feature}=enabled"]
+    zpool_create_args += ["-o", "cachefile=/tmp/zpool.cache"]
+    for prop in (
+        "atime=off",
+        "compression=zstd",
+        "copies=1",
+        "xattr=sa",
+        "sharesmb=off",
+        "sharenfs=off",
+        "checksum=blake3",
+        "dedup=off",
+        "utf8only=off",
+    ):
+        zpool_create_args += ["-O", prop]
+    zpool_create_args += ["-m", "none", "-R", mount_point.as_posix(), pool_name]
+    zpool_create_args += vdev
 
-    # Create rootfs
-    run_command("zfs create -o mountpoint=none " + pool_name + "/ROOT", verbose=True)
-    run_command(
-        "zfs create -o mountpoint=/ " + pool_name + "/ROOT/gentoo", verbose=True
-    )
+    icp(zpool_create_args)
+    _zpool(*zpool_create_args, _fg=True)
 
-    # Create home directories
-    # zfs create -o mountpoint=/home rpool/HOME
-    # zfs create -o mountpoint=/root rpool/HOME/root
+    _zfs("create", "-o", "mountpoint=none", f"{pool_name}/ROOT", _fg=True)
+    _zfs("create", "-o", "mountpoint=/", f"{pool_name}/ROOT/gentoo", _fg=True)
+    _zpool("set", f"bootfs={pool_name}/ROOT/gentoo", pool_name, _fg=True)
 
-    # Create portage directories
-    # zfs create -o mountpoint=none -o setuid=off rpool/GENTOO
-    # zfs create -o mountpoint=/usr/portage -o atime=off rpool/GENTOO/portage
-    # zfs create -o mountpoint=/usr/portage/distfiles rpool/GENTOO/distfiles
-
-    # Create portage build directory
-    # run_command("zfs create -o mountpoint=/var/tmp/portage -o compression=zstd -o sync=disabled rpool/GENTOO/build-dir")
-
-    # Create optional packages directory
-    # zfs create -o mountpoint=/usr/portage/packages rpool/GENTOO/packages
-
-    # Create optional ccache directory
-    # zfs create -o mountpoint=/var/tmp/ccache -o compression=zstd rpool/GENTOO/ccache
-
-    # Set bootfs
-    run_command(
-        "zpool set bootfs=" + pool_name + "/ROOT/gentoo " + pool_name, verbose=True
-    )
-
-    # Copy zpool.cache into chroot
-    run_command("mkdir -p /mnt/gentoo/etc/zfs", verbose=True)
-    run_command("cp /tmp/zpool.cache /mnt/gentoo/etc/zfs/zpool.cache", verbose=True)
-
-    # print("done making zfs filesystem, here's what is mounted:")
-    # run_command('mount')
+    zfs_config_dir = mount_point / "etc" / "zfs"
+    os.makedirs(zfs_config_dir, exist_ok=True)
+    shutil.copy2("/tmp/zpool.cache", zfs_config_dir / "zpool.cache")
 
 
 @cli.command()
@@ -340,7 +296,7 @@ def write_zfs_root_filesystem_on_devices(
 @click_add_options(click_global_options)
 @click.pass_context
 def create_zfs_pool(
-    ctx,
+    ctx: click.Context,
     *,
     devices: tuple[str, ...],
     force: bool,
@@ -354,7 +310,7 @@ def create_zfs_pool(
     dict_output: bool,
     encrypt: bool,
     verbose: bool = False,
-):
+) -> None:
     tty, verbose = tvicgvd(
         ctx=ctx,
         verbose=verbose,
@@ -363,172 +319,132 @@ def create_zfs_pool(
         gvd=gvd,
     )
 
-    # needed for --simulate
-    devices_pathlib: tuple[Path, ...] = tuple([Path(_device) for _device in devices])
-    del devices
-    devices = devices_pathlib
-    del devices_pathlib
+    _devices: tuple[Path, ...] = tuple(Path(_device) for _device in devices)
 
     if ashift:
-        assert ashift >= 9
-        assert ashift <= 16
-        eprint("using block size: {} (ashift={})".format(1 << ashift, ashift))
-
-    # if skip_checks:
-    #    assert simulate
+        assert 9 <= ashift <= 16
+        eprint(f"using block size: {1 << ashift} (ashift={ashift})")
 
     if simulate:
         skip_checks = True
 
     # https://raw.githubusercontent.com/ryao/zfs-overlay/master/zfs-install
-    run_command("modprobe zfs || exit 1")
+    hs.Command("modprobe")("zfs")
 
-    for device in devices:
+    for device in _devices:
         if not skip_checks:
             assert path_is_block_special(device, symlink_ok=True)
             assert not block_special_path_is_mounted(device)
         if not (
-            Path(device).name.startswith("nvme")
-            or Path(device).name.startswith("mmcblk")
-            or Path(device).name.startswith("wwn-")
+            device.name.startswith("nvme")
+            or device.name.startswith("mmcblk")
+            or device.name.startswith("wwn-")
         ):
             assert not device.name[-1].isdigit()
 
     if not skip_checks:
-        first_device_size = get_block_device_size(
-            devices[0],
-        )
-        for device in devices:
-            assert (
-                get_block_device_size(
-                    device,
-                )
-                == first_device_size
-            )
+        first_device_size = get_block_device_size(_devices[0])
+        for device in _devices:
+            assert get_block_device_size(device) == first_device_size
 
     assert raid_group_size >= 1
-    assert len(devices) >= raid_group_size
-
-    device_string = ""
-    if len(devices) == 1:
-        assert raid == "disk"
-        device_string = devices[0].as_posix()
-
-    if len(devices) > 1:
-        if raid in ["raidz3"]:
-            assert len(devices) % 2 == 0
-        assert raid in ["mirror", "raidz3"]
-        assert raid_group_size >= 2
-
-    if len(devices) == 2:
-        assert raid == "mirror"
-        device_string = "mirror " + devices[0].as_posix() + " " + devices[1].as_posix()
-
-    if len(devices) > 2:
-        if raid_group_size == 2:  # striped mirror raid10
-            for pair in grouper(devices, 2):
-                device_string = (
-                    device_string + "mirror " + pair[0] + " " + pair[1] + " "
-                )
-                eprint("device_string:", device_string)
-        elif raid_group_size == 4:
-            for quad in grouper(devices, 4):
-                assert False  # a 4x mirror? or a 2x2 mirror?
-                device_string = (
-                    device_string
-                    + "mirror "
-                    + quad[0]
-                    + " "
-                    + quad[1]
-                    + " "
-                    + quad[2]
-                    + " "
-                    + quad[3]
-                    + " "
-                )
-                eprint("device_string:", device_string)
-        elif raid_group_size in [8, 16]:
-            assert raid in ["raidz3", "mirror"]
-            if raid == "raidz3":
-                device_string = "raidz3"
-            elif raid == "mirror":
-                device_string = "mirror"
-
-            for device in devices:
-                device_string += " " + device.as_posix()
-            eprint("device_string:", device_string)
-        else:
-            if raid == "mirror":
-                device_string = "mirror"
-                for device in devices:
-                    device_string += " " + device.as_posix()
-                eprint("device_string:", device_string)
-            else:
-                print("unknown mode")
-                sys.exit(1)
-
-    assert device_string != ""
+    assert len(_devices) >= raid_group_size
     assert len(pool_name) > 2
 
-    if encrypt:
-        if not simulate:
-            passphrase = passphrase_prompt(
-                "zpool",
+    vdev: list[str] = []
+    if len(_devices) == 1:
+        assert raid == "disk"
+        vdev = [_devices[0].as_posix()]
+    if len(_devices) > 1:
+        if raid == "raidz3":
+            assert len(_devices) % 2 == 0
+        assert raid in {"mirror", "raidz3"}
+        assert raid_group_size >= 2
+    if len(_devices) == 2:
+        assert raid == "mirror"
+        vdev = ["mirror", _devices[0].as_posix(), _devices[1].as_posix()]
+    if len(_devices) > 2:
+        if raid_group_size == 2:  # striped mirror raid10
+            for pair in grouper(_devices, 2):
+                vdev.append("mirror")
+                vdev.extend(Path(_).as_posix() for _ in pair)
+                eprint("vdev:", vdev)
+        elif raid_group_size == 4:
+            raise NotImplementedError(
+                "raid_group_size=4: undecided between a 4x mirror and a 2x2 mirror"
             )
-            passphrase = passphrase.decode("utf8")
+        elif raid_group_size in {8, 16}:
+            assert raid in {"raidz3", "mirror"}
+            vdev = [raid] + [device.as_posix() for device in _devices]
+            eprint("vdev:", vdev)
+        else:
+            if raid != "mirror":
+                raise ValueError(
+                    f"unknown mode: raid={raid} raid_group_size={raid_group_size}"
+                )
+            vdev = ["mirror"] + [device.as_posix() for device in _devices]
+            eprint("vdev:", vdev)
+    assert vdev
 
-    command = "zpool create"
-    command += " -o feature@async_destroy=enabled"  # default Destroy filesystems asynchronously.
-    command += " -o feature@blake3=enabled"
-    command += " -o feature@block_cloning=enabled"
-    command += " -o feature@bookmarks=enabled"  # default "zfs bookmark" command
-    command += " -o feature@bookmark_v2=enabled"  # default
-    command += " -o feature@device_rebuild=enabled"
-    command += " -o feature@embedded_data=enabled"  # default Blocks which compress very well use even less space.
-    command += " -o feature@empty_bpobj=enabled"  # default Snapshots use less space.
-    command += " -o feature@enabled_txg=enabled"  # default   # Record txg at which a feature is enabled
-    command += " -o feature@extensible_dataset=enabled"  # default   # Enhanced dataset functionality.
-    command += " -o feature@head_errlog=enabled"
-    command += " -o feature@spacemap_histogram=enabled"  # default   # Spacemaps maintain space histograms.
-    command += " -o feature@spacemap_v2=enabled"  # default
-    command += " -o feature@zpool_checkpoint=enabled"  # default
-    command += (
-        " -o feature@large_dnode=enabled"  # default  Variable on-disk size of dnodes.
-    )
-    command += " -o feature@large_blocks=enabled"  # default  Support for blocks larger than 128KB.
-    command += " -o feature@zstd_compress=enabled"  # default (independent of the zfs compression flag)
+    zpool_create_args = ["create"]
+    for feature in (
+        "async_destroy",
+        "blake3",
+        "block_cloning",
+        "bookmarks",
+        "bookmark_v2",
+        "device_rebuild",
+        "embedded_data",
+        "empty_bpobj",
+        "enabled_txg",
+        "extensible_dataset",
+        "head_errlog",
+        "spacemap_histogram",
+        "spacemap_v2",
+        "zpool_checkpoint",
+        "large_dnode",
+        "large_blocks",
+        "zstd_compress",
+    ):
+        zpool_create_args += ["-o", f"feature@{feature}=enabled"]
     if ashift:
-        command += f" -o ashift={ashift}"
-    command += " -o listsnapshots=on"
+        zpool_create_args += ["-o", f"ashift={ashift}"]
+    zpool_create_args += ["-o", "listsnapshots=on"]
 
     if encrypt:
-        command += " -o feature@encryption=enabled"
-        command += " -O encryption=aes-256-gcm"
-        command += " -O keyformat=passphrase"
-        command += " -O keylocation=prompt"
-        command += " -O pbkdf2iters=560000"
-        command += " -O checksum=blake3"
+        zpool_create_args += ["-o", "feature@encryption=enabled"]
+        # keylocation=prompt: zpool create prompts for the passphrase itself
+        for prop in (
+            "encryption=aes-256-gcm",
+            "keyformat=passphrase",
+            "keylocation=prompt",
+            "pbkdf2iters=560000",
+            "checksum=blake3",
+        ):
+            zpool_create_args += ["-O", prop]
     else:
-        command += " -O checksum=fletcher4"  # default
+        zpool_create_args += ["-O", "checksum=fletcher4"]
 
-    command += " -O atime=off"  # (dont write when reading)
-    command += " -O compression=zstd"  # (better than lzjb)
-    command += " -O copies=1"
-    command += " -O xattr=off"  # (sa is better than on)
-    command += " -O sharesmb=off"
-    command += " -O sharenfs=off"
-    command += " -O dedup=off"  # default
-    command += " -O utf8only=off"  # default
-    command += " -O mountpoint=none"  # dont mount raw zpools
-    command += " -O setuid=off"  # only needed on rootfs
-    command += " " + pool_name + " " + device_string
+    for prop in (
+        "atime=off",
+        "compression=zstd",
+        "copies=1",
+        "xattr=off",
+        "sharesmb=off",
+        "sharenfs=off",
+        "dedup=off",
+        "utf8only=off",
+        "mountpoint=none",
+        "setuid=off",
+    ):
+        zpool_create_args += ["-O", prop]
 
-    icp(command)
+    zpool_create_args.append(pool_name)
+    zpool_create_args += vdev
+
+    icp(zpool_create_args)
     if not simulate:
-        # stdin = None
-        # if encrypt:
-        #    stdin = passphrase
-        os.system(command)
+        _zpool(*zpool_create_args, _fg=True)
 
 
 @cli.command()
@@ -541,7 +457,7 @@ def create_zfs_pool(
 @click_add_options(click_global_options)
 @click.pass_context
 def zfs_filesystem_destroy(
-    ctx,
+    ctx: click.Context,
     pool: str,
     name: str,
     simulate: bool,
@@ -562,8 +478,11 @@ def zfs_filesystem_destroy(
     assert len(pool.split()) == 1
     assert len(name.split()) == 1
     assert len(name) > 2
-    # todo check if mounted, need to get mountpoint= from zfs
-    sh.zfs.destroy(Path(pool) / Path(name), _fg=True)
+    destroy_command = _zfs.bake("destroy", f"{pool}/{name}")
+    if simulate:
+        print(destroy_command)
+        return
+    destroy_command(_fg=True)
 
 
 @cli.command()
@@ -597,7 +516,7 @@ def zfs_filesystem_destroy(
 @click_add_options(click_global_options)
 @click.pass_context
 def create_zfs_filesystem(
-    ctx,
+    ctx: click.Context,
     pool: str,
     name: str,
     simulate: bool,
@@ -617,7 +536,6 @@ def create_zfs_filesystem(
         ic=ic,
         gvd=gvd,
     )
-    ic()
 
     assert "/" not in pool
     assert not name.startswith("/")
@@ -625,33 +543,30 @@ def create_zfs_filesystem(
     assert len(name.split()) == 1
     assert len(name) > 1
 
-    # https://raw.githubusercontent.com/ryao/zfs-overlay/master/zfs-install
-    # run_command("modprobe zfs || exit 1")
-
-    command = "zfs create -o setuid=off -o devices=off"
+    zfs_create_args = ["create", "-o", "setuid=off", "-o", "devices=off"]
     if encrypt:
-        command += " -o encryption=aes-256-gcm"
-        command += " -o keyformat=passphrase"
-        command += " -o keylocation=prompt"
+        for prop in (
+            "encryption=aes-256-gcm",
+            "keyformat=passphrase",
+            "keylocation=prompt",
+        ):
+            zfs_create_args += ["-o", prop]
 
-    if exe:
-        command += " -o exec=on"
-    else:
-        command += " -o exec=off"
+    zfs_create_args += ["-o", "exec=on" if exe else "exec=off"]
 
     if reservation:
-        command += " -o reservation=" + reservation
+        zfs_create_args += ["-o", f"reservation={reservation}"]
 
     if not nomount:
-        command += " -o mountpoint=/" + pool + "/" + name
+        zfs_create_args += ["-o", f"mountpoint=/{pool}/{name}"]
 
-    command += " " + pool + "/" + name
+    zfs_create_args.append(f"{pool}/{name}")
 
     if verbose or simulate:
-        ic(command)
+        ic(zfs_create_args)
 
     if not simulate:
-        run_command(command, verbose=True, expected_exit_status=0)
+        _zfs(*zfs_create_args, _fg=True)
 
     if nfs_subnet:
         ctx.invoke(
@@ -672,7 +587,7 @@ def create_zfs_filesystem(
 @click_add_options(click_global_options)
 @click.pass_context
 def create_zfs_filesystem_snapshot(
-    ctx,
+    ctx: click.Context,
     *,
     path: str,
     simulate: bool,
@@ -693,14 +608,13 @@ def create_zfs_filesystem_snapshot(
     assert len(path) > 3
 
     timestamp = str(int(float(get_timestamp())))
-    snapshot_path = path + f"@__{timestamp}"
-    command = sh.zfs.snapshot.bake(snapshot_path)
+    snapshot_command = _zfs.bake("snapshot", f"{path}@__{timestamp}")
 
     if verbose or simulate:
-        ic(command)
+        ic(snapshot_command)
 
     if not simulate:
-        command()
+        snapshot_command()
 
 
 @cli.command()
@@ -722,7 +636,7 @@ def create_zfs_filesystem_snapshot(
 @click_add_options(click_global_options)
 @click.pass_context
 def zfs_set_sharenfs(
-    ctx,
+    ctx: click.Context,
     *,
     pool: str,
     name: str,
@@ -733,7 +647,7 @@ def zfs_set_sharenfs(
     verbose_inf: bool,
     dict_output: bool,
     verbose: bool = False,
-):
+) -> None:
     tty, verbose = tvicgvd(
         ctx=ctx,
         verbose=verbose,
@@ -743,18 +657,17 @@ def zfs_set_sharenfs(
     )
     maxone([off, no_root_write])
 
-    filesystem = pool + "/" + name
+    filesystem = f"{pool}/{name}"
 
     assert not filesystem.startswith("/")
-    assert len(filesystem.split()) == 1
     assert len(filesystem.split()) == 1
     assert len(filesystem) > 2
 
     if verbose:
-        eprint(sh.zfs.get("sharenfs", filesystem))
+        eprint(str(_zfs("get", "sharenfs", filesystem)))
 
     if off:
-        disable_nfs_command = sh.zfs.set.bake("sharenfs=off", filesystem)
+        disable_nfs_command = _zfs.bake("set", "sharenfs=off", filesystem)
         if simulate:
             print(disable_nfs_command)
         else:
@@ -775,25 +688,20 @@ def zfs_set_sharenfs(
         "anongid=65534",
         "sec=sys",
     ]
-    # these cause zfs set sharenfs= command to fail:
-    # ['acl', 'no_pnfs']
+    # these cause zfs set sharenfs= to fail: acl, no_pnfs
 
     assert "/" in subnet
-    sharenfs_list.append("rw=" + subnet)
+    sharenfs_list.append(f"rw={subnet}")
 
     if no_root_write:
         sharenfs_list.append("root_squash")
     else:
         sharenfs_list.append("no_root_squash")
 
-    sharenfs_line = ",".join(sharenfs_list)
+    sharenfs_line = f"sharenfs={','.join(sharenfs_list)}"
     ic(sharenfs_line)
 
-    # sharenfs_line = 'sharenfs=*(' + sharenfs_line + ')'
-    sharenfs_line = "sharenfs=" + sharenfs_line
-    ic(sharenfs_line)
-
-    zfs_command = sh.zfs.set.bake(sharenfs_line, filesystem)
+    zfs_command = _zfs.bake("set", sharenfs_line, filesystem)
     if simulate:
         output(
             zfs_command,
