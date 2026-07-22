@@ -478,7 +478,7 @@ def zfs_filesystem_destroy(
     assert len(pool.split()) == 1
     assert len(name.split()) == 1
     assert len(name) > 2
-    destroy_command = _zfs.bake("destroy", f"{pool}/{name}")
+    destroy_command = _zfs.rebake("destroy", f"{pool}/{name}")
     if simulate:
         print(destroy_command)
         return
@@ -608,7 +608,7 @@ def create_zfs_filesystem_snapshot(
     assert len(path) > 3
 
     timestamp = str(int(float(get_timestamp())))
-    snapshot_command = _zfs.bake("snapshot", f"{path}@__{timestamp}")
+    snapshot_command = _zfs.rebake("snapshot", f"{path}@__{timestamp}")
 
     if verbose or simulate:
         ic(snapshot_command)
@@ -667,7 +667,7 @@ def zfs_set_sharenfs(
         eprint(str(_zfs("get", "sharenfs", filesystem)))
 
     if off:
-        disable_nfs_command = _zfs.bake("set", "sharenfs=off", filesystem)
+        disable_nfs_command = _zfs.rebake("set", "sharenfs=off", filesystem)
         if simulate:
             print(disable_nfs_command)
         else:
@@ -701,7 +701,7 @@ def zfs_set_sharenfs(
     sharenfs_line = f"sharenfs={','.join(sharenfs_list)}"
     ic(sharenfs_line)
 
-    zfs_command = _zfs.bake("set", sharenfs_line, filesystem)
+    zfs_command = _zfs.rebake("set", sharenfs_line, filesystem)
     if simulate:
         output(
             zfs_command,
