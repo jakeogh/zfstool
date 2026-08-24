@@ -15,14 +15,12 @@ from asserttool import maxone
 from click_auto_help import AHGroup
 from clicktool import click_add_options
 from clicktool import click_global_options
-from clicktool import tvicgvd
+from clicktool import tvic
 from devicetool import get_block_device_size
 from devicetool import path_is_block_special
 from eprint import eprint
-from globalverbose import gvd
 from itertool import grouper
 from mounttool import block_special_path_is_mounted
-from mptool import output
 from timestamptool import get_timestamp
 
 signal(SIGPIPE, SIG_DFL)
@@ -66,12 +64,11 @@ def cli(
     dict_output: bool,
     verbose: bool = False,
 ) -> None:
-    tty, verbose = tvicgvd(
+    tty, verbose = tvic(
         ctx=ctx,
         verbose=verbose,
         verbose_inf=verbose_inf,
         ic=ic,
-        gvd=gvd,
     )
 
 
@@ -85,12 +82,11 @@ def zfs_check_mountpoints(
     dict_output: bool,
     verbose: bool = False,
 ) -> None:
-    tty, verbose = tvicgvd(
+    tty, verbose = tvic(
         ctx=ctx,
         verbose=verbose,
         verbose_inf=verbose_inf,
         ic=ic,
-        gvd=gvd,
     )
 
     mountpoints = str(_zfs("get", "mountpoint"))
@@ -171,12 +167,11 @@ def write_zfs_root_filesystem_on_devices(
     dict_output: bool,
     verbose: bool = False,
 ) -> None:
-    tty, verbose = tvicgvd(
+    tty, verbose = tvic(
         ctx=ctx,
         verbose=verbose,
         verbose_inf=verbose_inf,
         ic=ic,
-        gvd=gvd,
     )
     devices = tuple(Path(_device) for _device in devices)
 
@@ -311,12 +306,11 @@ def create_zfs_pool(
     encrypt: bool,
     verbose: bool = False,
 ) -> None:
-    tty, verbose = tvicgvd(
+    tty, verbose = tvic(
         ctx=ctx,
         verbose=verbose,
         verbose_inf=verbose_inf,
         ic=ic,
-        gvd=gvd,
     )
 
     _devices: tuple[Path, ...] = tuple(Path(_device) for _device in devices)
@@ -465,12 +459,11 @@ def zfs_filesystem_destroy(
     dict_output: bool,
     verbose: bool = False,
 ) -> None:
-    tty, verbose = tvicgvd(
+    tty, verbose = tvic(
         ctx=ctx,
         verbose=verbose,
         verbose_inf=verbose_inf,
         ic=ic,
-        gvd=gvd,
     )
 
     assert "/" not in pool
@@ -529,12 +522,11 @@ def create_zfs_filesystem(
     dict_output: bool,
     verbose: bool = False,
 ) -> None:
-    tty, verbose = tvicgvd(
+    tty, verbose = tvic(
         ctx=ctx,
         verbose=verbose,
         verbose_inf=verbose_inf,
         ic=ic,
-        gvd=gvd,
     )
 
     assert "/" not in pool
@@ -595,12 +587,11 @@ def create_zfs_filesystem_snapshot(
     dict_output: bool,
     verbose: bool = False,
 ) -> None:
-    tty, verbose = tvicgvd(
+    tty, verbose = tvic(
         ctx=ctx,
         verbose=verbose,
         verbose_inf=verbose_inf,
         ic=ic,
-        gvd=gvd,
     )
 
     assert not path.startswith("/")
@@ -648,12 +639,11 @@ def zfs_set_sharenfs(
     dict_output: bool,
     verbose: bool = False,
 ) -> None:
-    tty, verbose = tvicgvd(
+    tty, verbose = tvic(
         ctx=ctx,
         verbose=verbose,
         verbose_inf=verbose_inf,
         ic=ic,
-        gvd=gvd,
     )
     maxone([off, no_root_write])
 
@@ -703,16 +693,6 @@ def zfs_set_sharenfs(
 
     zfs_command = _zfs.rebake("set", sharenfs_line, filesystem)
     if simulate:
-        output(
-            zfs_command,
-            reason=None,
-            dict_output=dict_output,
-            tty=tty,
-        )
-    else:
-        output(
-            zfs_command(),
-            reason=None,
-            dict_output=dict_output,
-            tty=tty,
-        )
+        print({None: zfs_command} if dict_output else zfs_command, flush=True)
+        return
+    zfs_command(_fg=True)
