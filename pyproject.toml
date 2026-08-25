@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zfstool"
-version = "1!0.0.1787598535"
+version = "1!0.0.1787634052"
 description = "Common functions for working with zfs"
 authors = [
     { name = "Justin Keogh", email = "github.com@v6y.net" },
@@ -13,12 +13,12 @@ dependencies = [
     "click",
     "asserttool @ git+https://github.com/jakeogh/asserttool@4bd23a06c2161e488415acde89c29537e6720cc1",
     "click-auto-help @ git+https://github.com/jakeogh/click-auto-help@c53f57c78529a51ae9b03f579d7ee6f2d63ca03a",
-    "clicktool @ git+https://github.com/jakeogh/clicktool@7294ba6934225c028e48638fc0540bc57238ff00",
-    "devicetool @ git+https://github.com/jakeogh/devicetool@6f0f18dc2c1a70f9e0a0d0a000cf5a86316fd8c5",
+    "clicktool @ git+https://github.com/jakeogh/clicktool@4bc98af7590652693aef664af7485acde40688c2",
+    "devicetool @ git+https://github.com/jakeogh/devicetool@2a7c9ab53481eba585bfa83db2e43536252bc08d",
     "eprint @ git+https://github.com/jakeogh/eprint@6ee1deca0c24b684eb5093247d6bd22e11f1b057",
     "hs @ git+https://github.com/jakeogh/hs@b33c88f35cd24e773fea6ca4758193c9e815536d",
     "itertool @ git+https://github.com/jakeogh/itertool@f46b317d3d2d8e2a6d55193c25caf3f5ea9c5b04",
-    "mounttool @ git+https://github.com/jakeogh/mounttool@171b99f6888ef3bd1858f341349b6c59417f0c10",
+    "mounttool @ git+https://github.com/jakeogh/mounttool@1dc451c21a89a45ffb69161a6ed7432c8192d9a6",
     "timestamptool @ git+https://github.com/jakeogh/timestamptool@2d9868ec701af7666827ce3f6866198f80f14b2a",
 ]
 license = "ISC"
