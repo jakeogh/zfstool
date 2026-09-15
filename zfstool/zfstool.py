@@ -3,6 +3,7 @@
 import os
 import shutil
 import time
+import tomllib
 from dataclasses import asdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,7 @@ signal(SIGPIPE, SIG_DFL)
 
 _zfs = hs.Command("zfs")
 _zpool = hs.Command("zpool")
+_ssh = hs.Command("ssh")
 
 ASHIFT_HELP = """9: 1<<9 == 512
 10: 1<<10 == 1024
@@ -702,7 +704,11 @@ def zfs_set_sharenfs(
     zfs_command(_fg=True)
 
 
+_zfs_autobackup = hs.Command("zfs-autobackup")
+
 AUTOBACKUP_PREFIX = "autobackup:"
+
+AUTOBACKUP_CONFIG = Path("/etc/zfstool/autobackup.toml")
 
 CRON_PATHS = (
     Path("/etc/crontab"),
@@ -713,6 +719,65 @@ CRON_PATHS = (
     Path("/etc/cron.monthly"),
     Path("/var/spool/cron"),
 )
+
+
+@dataclass(frozen=True)
+class AutobackupJob:
+    target_path: str
+    ssh_target: None | str = None
+    strip_path: int = 0
+    keep_source: None | str = None
+    keep_target: None | str = None
+    extra: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AutobackupResult:
+    dataset: str
+    backup_name: str
+    status: str
+    target: None | str
+    target_pool: None | str
+    newest_common: None | str
+    age: None | int
+    oldest_common: None | str
+    point_count: int
+    pending: int
+    recent_points: tuple[tuple[str, int], ...]
+
+
+def autobackup_jobs(config: Path = AUTOBACKUP_CONFIG) -> dict[str, AutobackupJob]:
+    if not config.is_file():
+        return {}
+    parsed = tomllib.loads(config.read_text(encoding="utf8"))
+    jobs: dict[str, AutobackupJob] = {}
+    for name, entry in parsed.get("jobs", {}).items():
+        assert "target" in entry
+        jobs[name] = AutobackupJob(
+            target_path=entry["target"],
+            ssh_target=entry.get("ssh_target"),
+            strip_path=entry.get("strip_path", 0),
+            keep_source=entry.get("keep_source"),
+            keep_target=entry.get("keep_target"),
+            extra=tuple(entry.get("extra", [])),
+        )
+    return jobs
+
+
+def autobackup_job_args(name: str, job: AutobackupJob, test: bool) -> list[str]:
+    args = [name, job.target_path]
+    if job.ssh_target:
+        args += ["--ssh-target", job.ssh_target]
+    if job.strip_path:
+        args += ["--strip-path", str(job.strip_path)]
+    if job.keep_source:
+        args += ["--keep-source", job.keep_source]
+    if job.keep_target:
+        args += ["--keep-target", job.keep_target]
+    args += list(job.extra)
+    if test:
+        args.append("--test")
+    return args
 
 
 def zfs_dataset_list() -> list[str]:
@@ -765,271 +830,11 @@ def autobackup_schedule_lines() -> list[tuple[Path, int, str]]:
                 continue
             content = candidate.read_text(encoding="utf8", errors="replace")
             for index, line in enumerate(content.splitlines(), start=1):
-                if "zfs-autobackup" in line:
+                if line.strip().startswith("#"):
+                    continue
+                if "autobackup" in line:
                     hits.append((candidate, index, line.strip()))
     return hits
-
-
-@cli.group(no_args_is_help=True, cls=AHGroup)
-@click_add_options(click_global_options)
-@click.pass_context
-def autobackup(
-    ctx: click.Context,
-    *,
-    verbose_inf: bool,
-    dict_output: bool,
-    verbose: bool = False,
-) -> None:
-    tty, verbose = tvic(
-        ctx=ctx,
-        verbose=verbose,
-        verbose_inf=verbose_inf,
-        ic=ic,
-    )
-
-
-@autobackup.command()
-@click.option("--backup-name", is_flag=False, required=False, type=str)
-@click_add_options(click_global_options)
-@click.pass_context
-def status(
-    ctx: click.Context,
-    *,
-    backup_name: None | str,
-    verbose_inf: bool,
-    dict_output: bool,
-    verbose: bool = False,
-) -> None:
-    tty, verbose = tvic(
-        ctx=ctx,
-        verbose=verbose,
-        verbose_inf=verbose_inf,
-        ic=ic,
-    )
-
-    mapping = autobackup_property_map()
-
-    eprint("=== autobackup properties ===")
-    for dataset in sorted(mapping):
-        for _name in sorted(mapping[dataset]):
-            if backup_name and _name != backup_name:
-                continue
-            value, source = mapping[dataset][_name]
-            selected = autobackup_is_selected(value, source)
-            if dict_output:
-                print(
-                    {
-                        dataset: {
-                            "backup_name": _name,
-                            "value": value,
-                            "source": source,
-                            "selected": selected,
-                        }
-                    },
-                    flush=True,
-                )
-            else:
-                print(f"{dataset}\t{_name}\t{value}\t{source}", flush=True)
-
-    eprint("=== schedule ===")
-    for path, index, line in autobackup_schedule_lines():
-        if dict_output:
-            print({path.as_posix(): {"line": index, "text": line}}, flush=True)
-        else:
-            print(f"{path}:{index}\t{line}", flush=True)
-
-
-@autobackup.command()
-@click.option("--backup-name", is_flag=False, required=False, type=str)
-@click.option("--verified", is_flag=True)
-@click.option("--target-path", is_flag=False, required=False, type=str)
-@click.option("--ssh-target", is_flag=False, required=False, type=str)
-@click.option("--strip-path", is_flag=False, required=False, type=int)
-@click.option("--max-age", is_flag=False, required=False, type=int)
-@click.option("--stale-factor", is_flag=False, required=False, type=int, default=3)
-@click.option("--points", is_flag=False, required=False, type=int, default=0)
-@click_add_options(click_global_options)
-@click.pass_context
-def selected(
-    ctx: click.Context,
-    *,
-    backup_name: None | str,
-    verified: bool,
-    target_path: None | str,
-    ssh_target: None | str,
-    strip_path: None | int,
-    max_age: None | int,
-    stale_factor: int,
-    points: int,
-    verbose_inf: bool,
-    dict_output: bool,
-    verbose: bool = False,
-) -> None:
-    tty, verbose = tvic(
-        ctx=ctx,
-        verbose=verbose,
-        verbose_inf=verbose_inf,
-        ic=ic,
-    )
-
-    mapping = autobackup_property_map()
-
-    pairs: list[tuple[str, str]] = []
-    for dataset in sorted(mapping):
-        for _name in sorted(mapping[dataset]):
-            if backup_name and _name != backup_name:
-                continue
-            value, source = mapping[dataset][_name]
-            if not autobackup_is_selected(value, source):
-                continue
-            pairs.append((dataset, _name))
-
-    if not verified:
-        for dataset, _name in pairs:
-            source = mapping[dataset][_name][1]
-            if dict_output:
-                print(
-                    {dataset: {"backup_name": _name, "source": source}},
-                    flush=True,
-                )
-            else:
-                print(f"{dataset}\t{_name}\t{source}", flush=True)
-        return
-
-    override = AutobackupTarget(
-        target_path=target_path,
-        ssh_target=ssh_target,
-        strip_path=strip_path if strip_path is not None else 0,
-    )
-    results = autobackup_verify(
-        pairs=pairs,
-        override=override if target_path else None,
-        max_age=max_age,
-        stale_factor=stale_factor,
-        verbose=verbose,
-    )
-
-    for result in results:
-        if dict_output:
-            print({result.dataset: asdict(result)}, flush=True)
-        else:
-            print(
-                "\t".join(
-                    [
-                        result.dataset,
-                        result.backup_name,
-                        result.status,
-                        result.newest_common or "-",
-                        autobackup_format_age(result.age),
-                        str(result.point_count),
-                        f"pending={result.pending}",
-                    ]
-                ),
-                flush=True,
-            )
-        if points and result.recent_points:
-            for name, creation in result.recent_points[-points:]:
-                eprint(f"    {name}\t{autobackup_format_age(int(time.time()) - creation)}")
-
-    for pool in sorted({_r.target_pool for _r in results if _r.target_pool}):
-        eprint(f"=== {pool} {autobackup_scrub_line(pool, ssh_target, verbose)} ===")
-
-    if any(_r.status != "ok" for _r in results):
-        ctx.exit(1)
-
-
-@autobackup.command()
-@click.option("--backup-name", is_flag=False, required=False, type=str)
-@click_add_options(click_global_options)
-@click.pass_context
-def unselected(
-    ctx: click.Context,
-    *,
-    backup_name: None | str,
-    verbose_inf: bool,
-    dict_output: bool,
-    verbose: bool = False,
-) -> None:
-    tty, verbose = tvic(
-        ctx=ctx,
-        verbose=verbose,
-        verbose_inf=verbose_inf,
-        ic=ic,
-    )
-
-    mapping = autobackup_property_map()
-
-    for dataset in zfs_dataset_list():
-        properties = mapping.get(dataset, {})
-        if backup_name:
-            names = [backup_name] if backup_name in properties else []
-        else:
-            names = sorted(properties)
-
-        covered = [
-            _name
-            for _name in names
-            if autobackup_is_selected(*properties[_name])
-        ]
-        if covered:
-            continue
-
-        excluded_by = [
-            _name for _name in names if properties[_name][0] in {"false", "child"}
-        ]
-        reason = f"excluded:{','.join(excluded_by)}" if excluded_by else "unconfigured"
-
-        if dict_output:
-            print({dataset: {"reason": reason}}, flush=True)
-        else:
-            print(f"{dataset}\t{reason}", flush=True)
-
-
-_ssh = hs.Command("ssh")
-
-AUTOBACKUP_VALUE_OPTIONS = frozenset(
-    {
-        "--ssh-target",
-        "--ssh-source",
-        "--ssh-config",
-        "--strip-path",
-        "--keep-source",
-        "--keep-target",
-        "--filter-properties",
-        "--set-properties",
-        "--min-change",
-        "--snapshot-format",
-        "--property-format",
-        "--hold-format",
-        "--send-pipe",
-        "--recv-pipe",
-        "--exclude-received",
-        "--destroy-missing",
-        "--buffer",
-    }
-)
-
-
-@dataclass(frozen=True)
-class AutobackupTarget:
-    target_path: None | str
-    ssh_target: None | str
-    strip_path: int
-
-
-@dataclass(frozen=True)
-class AutobackupResult:
-    dataset: str
-    backup_name: str
-    status: str
-    target: None | str
-    target_pool: None | str
-    newest_common: None | str
-    age: None | int
-    oldest_common: None | str
-    point_count: int
-    pending: int
-    recent_points: tuple[tuple[str, int], ...]
 
 
 def autobackup_format_age(age: None | int) -> str:
@@ -1042,59 +847,10 @@ def autobackup_format_age(age: None | int) -> str:
     return f"{age // 86400}d"
 
 
-def autobackup_parse_cron() -> dict[str, AutobackupTarget]:
-    targets: dict[str, AutobackupTarget] = {}
-    for _path, _index, line in autobackup_schedule_lines():
-        if line.startswith("#"):
-            continue
-        tokens = line.split()
-        if "zfs-autobackup" not in " ".join(tokens):
-            continue
-        start = 0
-        for index, token in enumerate(tokens):
-            if token.endswith("zfs-autobackup"):
-                start = index + 1
-                break
-        tokens = tokens[start:]
-
-        positional: list[str] = []
-        ssh_target: None | str = None
-        strip_path = 0
-        index = 0
-        while index < len(tokens):
-            token = tokens[index]
-            if token.startswith("-"):
-                key, _, inline = token.partition("=")
-                if inline:
-                    value = inline
-                elif key in AUTOBACKUP_VALUE_OPTIONS:
-                    index += 1
-                    value = tokens[index] if index < len(tokens) else ""
-                else:
-                    value = ""
-                if key == "--ssh-target":
-                    ssh_target = value
-                elif key == "--strip-path":
-                    strip_path = int(value)
-            else:
-                positional.append(token)
-            index += 1
-
-        if len(positional) < 2:
-            continue
-        targets[positional[0]] = AutobackupTarget(
-            target_path=positional[1],
-            ssh_target=ssh_target,
-            strip_path=strip_path,
-        )
-    return targets
-
-
-def autobackup_target_dataset(dataset: str, target: AutobackupTarget) -> str:
-    assert target.target_path
-    remainder = dataset.split("/")[target.strip_path :]
+def autobackup_target_dataset(dataset: str, job: AutobackupJob) -> str:
+    remainder = dataset.split("/")[job.strip_path :]
     assert remainder
-    return "/".join([target.target_path] + remainder)
+    return "/".join([job.target_path] + remainder)
 
 
 def zfs_snapshot_index(
@@ -1180,14 +936,13 @@ def autobackup_stale_threshold(
 def autobackup_verify(
     *,
     pairs: list[tuple[str, str]],
-    override: None | AutobackupTarget,
+    jobs: dict[str, AutobackupJob],
     max_age: None | int,
     stale_factor: int,
     verbose: bool,
 ) -> list[AutobackupResult]:
-    cron_targets = {} if override else autobackup_parse_cron()
     if verbose:
-        ic(cron_targets)
+        ic(jobs)
 
     source_pools = sorted({_dataset.split("/")[0] for _dataset, _ in pairs})
     source_index: dict[str, list[tuple[str, str, int, int]]] = {}
@@ -1195,7 +950,6 @@ def autobackup_verify(
         source_index.update(zfs_snapshot_index(pool, None, verbose))
 
     target_index: dict[str, dict[str, list[tuple[str, str, int, int]]]] = {}
-    target_holds: dict[str, dict[str, list[str]]] = {}
 
     held = [
         f"{_dataset}@{_row[0]}"
@@ -1204,15 +958,13 @@ def autobackup_verify(
         if _row[3] > 0
     ]
     source_holds = zfs_hold_tags(held, None, verbose) if held else {}
-    if verbose:
-        ic(source_holds)
 
     now = int(time.time())
     results: list[AutobackupResult] = []
 
     for dataset, name in pairs:
-        target = override if override else cron_targets.get(name)
-        if not target or not target.target_path:
+        job = jobs.get(name)
+        if not job:
             results.append(
                 AutobackupResult(
                     dataset=dataset,
@@ -1230,23 +982,12 @@ def autobackup_verify(
             )
             continue
 
-        target_dataset = autobackup_target_dataset(dataset, target)
+        target_dataset = autobackup_target_dataset(dataset, job)
         target_pool = target_dataset.split("/")[0]
-        key = f"{target.ssh_target or ''}:{target_pool}"
+        key = f"{job.ssh_target or ''}:{target_pool}"
         if key not in target_index:
             target_index[key] = zfs_snapshot_index(
-                target_pool, target.ssh_target, verbose
-            )
-            target_held = [
-                f"{_dataset}@{_row[0]}"
-                for _dataset, _rows in target_index[key].items()
-                for _row in _rows
-                if _row[3] > 0
-            ]
-            target_holds[key] = (
-                zfs_hold_tags(target_held, target.ssh_target, verbose)
-                if target_held
-                else {}
+                target_pool, job.ssh_target, verbose
             )
 
         source_rows = source_index.get(dataset, [])
@@ -1349,3 +1090,283 @@ def autobackup_scrub_line(
         if stripped.startswith("scan:"):
             return stripped
     return "scan: unknown"
+
+
+@cli.group(no_args_is_help=True, cls=AHGroup)
+@click_add_options(click_global_options)
+@click.pass_context
+def autobackup(
+    ctx: click.Context,
+    *,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+
+@autobackup.command()
+@click.option("--backup-name", is_flag=False, required=False, type=str)
+@click_add_options(click_global_options)
+@click.pass_context
+def status(
+    ctx: click.Context,
+    *,
+    backup_name: None | str,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+    mapping = autobackup_property_map()
+
+    eprint("=== autobackup properties ===")
+    for dataset in sorted(mapping):
+        for _name in sorted(mapping[dataset]):
+            if backup_name and _name != backup_name:
+                continue
+            value, source = mapping[dataset][_name]
+            selected_state = autobackup_is_selected(value, source)
+            if dict_output:
+                print(
+                    {
+                        dataset: {
+                            "backup_name": _name,
+                            "value": value,
+                            "source": source,
+                            "selected": selected_state,
+                        }
+                    },
+                    flush=True,
+                )
+            else:
+                print(f"{dataset}\t{_name}\t{value}\t{source}", flush=True)
+
+    eprint(f"=== jobs ({AUTOBACKUP_CONFIG}) ===")
+    jobs = autobackup_jobs()
+    for _name in sorted(jobs):
+        if backup_name and _name != backup_name:
+            continue
+        job = jobs[_name]
+        if dict_output:
+            print({_name: asdict(job)}, flush=True)
+        else:
+            print(
+                f"{_name}\t{job.ssh_target or 'local'}\t{job.target_path}\t"
+                f"strip={job.strip_path}",
+                flush=True,
+            )
+
+    eprint("=== schedule ===")
+    for path, index, line in autobackup_schedule_lines():
+        if dict_output:
+            print({path.as_posix(): {"line": index, "text": line}}, flush=True)
+        else:
+            print(f"{path}:{index}\t{line}", flush=True)
+
+
+@autobackup.command()
+@click.option("--backup-name", is_flag=False, required=False, type=str)
+@click.option("--test", is_flag=True)
+@click_add_options(click_global_options)
+@click.pass_context
+def run(
+    ctx: click.Context,
+    *,
+    backup_name: None | str,
+    test: bool,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+    if not test:
+        assert os.geteuid() == 0
+
+    jobs = autobackup_jobs()
+    assert jobs
+
+    if backup_name:
+        assert backup_name in jobs
+        names = [backup_name]
+    else:
+        names = sorted(jobs)
+
+    for _name in names:
+        command = _zfs_autobackup.rebake(
+            *autobackup_job_args(_name, jobs[_name], test)
+        )
+        icp(command)
+        command(_fg=True)
+
+
+@autobackup.command()
+@click.option("--backup-name", is_flag=False, required=False, type=str)
+@click.option("--verified", is_flag=True)
+@click.option("--target-path", is_flag=False, required=False, type=str)
+@click.option("--ssh-target", is_flag=False, required=False, type=str)
+@click.option("--strip-path", is_flag=False, required=False, type=int, default=0)
+@click.option("--max-age", is_flag=False, required=False, type=int)
+@click.option("--stale-factor", is_flag=False, required=False, type=int, default=3)
+@click.option("--points", is_flag=False, required=False, type=int, default=0)
+@click_add_options(click_global_options)
+@click.pass_context
+def selected(
+    ctx: click.Context,
+    *,
+    backup_name: None | str,
+    verified: bool,
+    target_path: None | str,
+    ssh_target: None | str,
+    strip_path: int,
+    max_age: None | int,
+    stale_factor: int,
+    points: int,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+    mapping = autobackup_property_map()
+
+    pairs: list[tuple[str, str]] = []
+    for dataset in sorted(mapping):
+        for _name in sorted(mapping[dataset]):
+            if backup_name and _name != backup_name:
+                continue
+            value, source = mapping[dataset][_name]
+            if not autobackup_is_selected(value, source):
+                continue
+            pairs.append((dataset, _name))
+
+    if not verified:
+        for dataset, _name in pairs:
+            source = mapping[dataset][_name][1]
+            if dict_output:
+                print(
+                    {dataset: {"backup_name": _name, "source": source}},
+                    flush=True,
+                )
+            else:
+                print(f"{dataset}\t{_name}\t{source}", flush=True)
+        return
+
+    if target_path:
+        assert backup_name
+        jobs = {
+            backup_name: AutobackupJob(
+                target_path=target_path,
+                ssh_target=ssh_target,
+                strip_path=strip_path,
+            )
+        }
+    else:
+        jobs = autobackup_jobs()
+
+    results = autobackup_verify(
+        pairs=pairs,
+        jobs=jobs,
+        max_age=max_age,
+        stale_factor=stale_factor,
+        verbose=verbose,
+    )
+
+    for result in results:
+        if dict_output:
+            print({result.dataset: asdict(result)}, flush=True)
+        else:
+            print(
+                "\t".join(
+                    [
+                        result.dataset,
+                        result.backup_name,
+                        result.status,
+                        result.newest_common or "-",
+                        autobackup_format_age(result.age),
+                        str(result.point_count),
+                        f"pending={result.pending}",
+                    ]
+                ),
+                flush=True,
+            )
+        if points and result.recent_points:
+            for _snapshot, _creation in result.recent_points[-points:]:
+                eprint(
+                    f"    {_snapshot}\t"
+                    f"{autobackup_format_age(int(time.time()) - _creation)}"
+                )
+
+    for pool in sorted({_r.target_pool for _r in results if _r.target_pool}):
+        job = next(_j for _j in jobs.values() if _j.target_path.startswith(pool))
+        eprint(f"=== {pool} {autobackup_scrub_line(pool, job.ssh_target, verbose)} ===")
+
+    if any(_r.status != "ok" for _r in results):
+        ctx.exit(1)
+
+
+@autobackup.command()
+@click.option("--backup-name", is_flag=False, required=False, type=str)
+@click_add_options(click_global_options)
+@click.pass_context
+def unselected(
+    ctx: click.Context,
+    *,
+    backup_name: None | str,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+    mapping = autobackup_property_map()
+
+    for dataset in zfs_dataset_list():
+        properties = mapping.get(dataset, {})
+        if backup_name:
+            names = [backup_name] if backup_name in properties else []
+        else:
+            names = sorted(properties)
+
+        covered = [
+            _name for _name in names if autobackup_is_selected(*properties[_name])
+        ]
+        if covered:
+            continue
+
+        excluded_by = [
+            _name for _name in names if properties[_name][0] in {"false", "child"}
+        ]
+        reason = f"excluded:{','.join(excluded_by)}" if excluded_by else "unconfigured"
+
+        if dict_output:
+            print({dataset: {"reason": reason}}, flush=True)
+        else:
+            print(f"{dataset}\t{reason}", flush=True)

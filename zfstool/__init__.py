@@ -2,16 +2,17 @@
 isort:skip_file
 """
 
+from .zfstool import AUTOBACKUP_CONFIG as AUTOBACKUP_CONFIG
 from .zfstool import AUTOBACKUP_PREFIX as AUTOBACKUP_PREFIX
-from .zfstool import AUTOBACKUP_VALUE_OPTIONS as AUTOBACKUP_VALUE_OPTIONS
 from .zfstool import CRON_PATHS as CRON_PATHS
 from .zfstool import RAID_LIST as RAID_LIST
+from .zfstool import AutobackupJob as AutobackupJob
 from .zfstool import AutobackupResult as AutobackupResult
-from .zfstool import AutobackupTarget as AutobackupTarget
 from .zfstool import autobackup as autobackup
 from .zfstool import autobackup_format_age as autobackup_format_age
 from .zfstool import autobackup_is_selected as autobackup_is_selected
-from .zfstool import autobackup_parse_cron as autobackup_parse_cron
+from .zfstool import autobackup_job_args as autobackup_job_args
+from .zfstool import autobackup_jobs as autobackup_jobs
 from .zfstool import autobackup_property_map as autobackup_property_map
 from .zfstool import autobackup_schedule_lines as autobackup_schedule_lines
 from .zfstool import autobackup_scrub_line as autobackup_scrub_line
@@ -21,6 +22,7 @@ from .zfstool import autobackup_verify as autobackup_verify
 from .zfstool import create_zfs_filesystem as create_zfs_filesystem
 from .zfstool import create_zfs_filesystem_snapshot as create_zfs_filesystem_snapshot
 from .zfstool import create_zfs_pool as create_zfs_pool
+from .zfstool import run as run
 from .zfstool import selected as selected
 from .zfstool import status as status
 from .zfstool import unselected as unselected
