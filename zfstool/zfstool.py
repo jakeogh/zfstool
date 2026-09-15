@@ -774,7 +774,7 @@ def autobackup_job_args(name: str, job: AutobackupJob, test: bool) -> list[str]:
         args += ["--keep-source", job.keep_source]
     if job.keep_target:
         args += ["--keep-target", job.keep_target]
-    args += list(job.extra)
+    args += [_arg for _arg in job.extra if not (test and _arg == "--progress")]
     if test:
         args.append("--test")
     return args
@@ -1218,7 +1218,9 @@ def run(
             command(_fg=True)
             continue
         for line in command(_iter=True, _err_to_out=True):
-            print(f"--test: {line.rstrip()}", flush=True)
+            for segment in line.replace("\r", "\n").splitlines():
+                if segment:
+                    print(f"--test: {segment.rstrip()}", flush=True)
 
 
 @autobackup.command()
