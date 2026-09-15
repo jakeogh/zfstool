@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zfstool"
-version = "1!0.0.1789454079"
+version = "1!0.0.1789457971"
 description = "Common functions for working with zfs"
 authors = [
     { name = "Justin Keogh", email = "github.com@v6y.net" },

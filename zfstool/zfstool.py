@@ -744,6 +744,8 @@ class AutobackupResult:
     oldest_point: None | str
     point_count: int
     pending: int
+    target_mounted: bool
+    target_readonly: bool
     recent_points: tuple[tuple[str, int], ...]
 
 
@@ -848,6 +850,21 @@ def autobackup_format_age(age: None | int) -> str:
     return f"{age // 86400}d"
 
 
+def autobackup_target_unsafe(result: AutobackupResult) -> bool:
+    if not result.target:
+        return False
+    return result.target_mounted or not result.target_readonly
+
+
+def autobackup_target_state(result: AutobackupResult) -> str:
+    if not result.target:
+        return "-"
+    flags = ["ro" if result.target_readonly else "rw"]
+    if result.target_mounted:
+        flags.append("mounted")
+    return ",".join(flags)
+
+
 def autobackup_target_dataset(dataset: str, job: AutobackupJob) -> str:
     remainder = dataset.split("/")[job.strip_path :]
     assert remainder
@@ -858,14 +875,14 @@ def zfs_snapshot_index(
     root: str,
     ssh_target: None | str,
     verbose: bool,
-) -> dict[str, list[tuple[str, str, int, int]]]:
+) -> dict[str, list[tuple[str, str, int, int, int]]]:
     args = [
         "list",
         "-Hp",
         "-t",
         "snapshot",
         "-o",
-        "name,guid,creation,userrefs",
+        "name,guid,creation,userrefs,used",
         "-r",
         root,
     ]
@@ -876,21 +893,60 @@ def zfs_snapshot_index(
     if verbose:
         icp(command)
 
-    index: dict[str, list[tuple[str, str, int, int]]] = {}
+    index: dict[str, list[tuple[str, str, int, int, int]]] = {}
     for line in str(command()).splitlines():
         if not line:
             continue
         fields = line.split("\t")
-        assert len(fields) == 4
-        name, guid, creation, userrefs = fields
+        assert len(fields) == 5
+        name, guid, creation, userrefs, used = fields
         dataset, _, snapshot = name.partition("@")
         assert snapshot
         index.setdefault(dataset, []).append(
-            (snapshot, guid, int(creation), 0 if userrefs == "-" else int(userrefs))
+            (
+                snapshot,
+                guid,
+                int(creation),
+                0 if userrefs == "-" else int(userrefs),
+                int(used),
+            )
         )
     for rows in index.values():
         rows.sort(key=lambda _row: _row[2])
     return index
+
+
+def zfs_dataset_state(
+    root: str,
+    ssh_target: None | str,
+    verbose: bool,
+) -> dict[str, tuple[bool, bool]]:
+    args = [
+        "list",
+        "-H",
+        "-o",
+        "name,mounted,readonly",
+        "-t",
+        "filesystem,volume",
+        "-r",
+        root,
+    ]
+    if ssh_target:
+        command = _ssh.rebake(ssh_target, "zfs", *args)
+    else:
+        command = _zfs.rebake(*args)
+    if verbose:
+        icp(command)
+
+    state: dict[str, tuple[bool, bool]] = {}
+    for line in str(command()).splitlines():
+        if not line:
+            continue
+        fields = line.split("\t")
+        assert len(fields) == 3
+        name, mounted, readonly = fields
+        state[name] = (mounted == "yes", readonly == "on")
+    return state
 
 
 def zfs_hold_tags(
@@ -946,11 +1002,12 @@ def autobackup_verify(
         ic(jobs)
 
     source_pools = sorted({_dataset.split("/")[0] for _dataset, _ in pairs})
-    source_index: dict[str, list[tuple[str, str, int, int]]] = {}
+    source_index: dict[str, list[tuple[str, str, int, int, int]]] = {}
     for pool in source_pools:
         source_index.update(zfs_snapshot_index(pool, None, verbose))
 
-    target_index: dict[str, dict[str, list[tuple[str, str, int, int]]]] = {}
+    target_index: dict[str, dict[str, list[tuple[str, str, int, int, int]]]] = {}
+    target_state: dict[str, dict[str, tuple[bool, bool]]] = {}
 
     held = [
         f"{_dataset}@{_row[0]}"
@@ -979,6 +1036,8 @@ def autobackup_verify(
                     oldest_point=None,
                     point_count=0,
                     pending=0,
+                    target_mounted=False,
+                    target_readonly=True,
                     recent_points=(),
                 )
             )
@@ -991,6 +1050,10 @@ def autobackup_verify(
             target_index[key] = zfs_snapshot_index(
                 target_pool, job.ssh_target, verbose
             )
+            target_state[key] = zfs_dataset_state(
+                target_pool, job.ssh_target, verbose
+            )
+        mounted, readonly = target_state[key].get(target_dataset, (False, True))
 
         source_rows = source_index.get(dataset, [])
         target_rows = target_index[key].get(target_dataset, [])
@@ -1009,6 +1072,8 @@ def autobackup_verify(
                     oldest_point=None,
                     point_count=0,
                     pending=len(source_rows),
+                    target_mounted=mounted,
+                    target_readonly=readonly,
                     recent_points=(),
                 )
             )
@@ -1031,6 +1096,8 @@ def autobackup_verify(
                     oldest_point=target_rows[0][0],
                     point_count=len(target_rows),
                     pending=len(source_rows),
+                    target_mounted=mounted,
+                    target_readonly=readonly,
                     recent_points=tuple((_row[0], _row[2]) for _row in target_rows),
                 )
             )
@@ -1072,6 +1139,8 @@ def autobackup_verify(
                 oldest_point=target_rows[0][0],
                 point_count=len(target_rows),
                 pending=pending,
+                target_mounted=mounted,
+                target_readonly=readonly,
                 recent_points=tuple((_row[0], _row[2]) for _row in target_rows),
             )
         )
@@ -1319,6 +1388,7 @@ def selected(
                         autobackup_format_age(result.age),
                         str(result.point_count),
                         f"pending={result.pending}",
+                        autobackup_target_state(result),
                     ]
                 ),
                 flush=True,
@@ -1334,7 +1404,7 @@ def selected(
         job = next(_j for _j in jobs.values() if _j.target_path.startswith(pool))
         eprint(f"=== {pool} {autobackup_scrub_line(pool, job.ssh_target, verbose)} ===")
 
-    if any(_r.status != "ok" for _r in results):
+    if any(_r.status != "ok" or autobackup_target_unsafe(_r) for _r in results):
         ctx.exit(1)
 
 
@@ -1381,3 +1451,144 @@ def unselected(
             print({dataset: {"reason": reason}}, flush=True)
         else:
             print(f"{dataset}\t{reason}", flush=True)
+
+
+def format_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "K", "M", "G", "T", "P"):
+        if value < 1024 or unit == "P":
+            return f"{value:.1f}{unit}" if unit != "B" else f"{int(value)}B"
+        value /= 1024
+    return f"{value:.1f}P"
+
+
+def zfs_range_reclaim(
+    dataset: str,
+    first: str,
+    last: str,
+    ssh_target: None | str,
+    verbose: bool,
+) -> int:
+    target = f"{dataset}@{first}%{last}"
+    if ssh_target:
+        command = _ssh.rebake(ssh_target, "zfs", "destroy", "-nvp", target)
+    else:
+        command = _zfs.rebake("destroy", "-nvp", target)
+    if verbose:
+        icp(command)
+    for line in str(command()).splitlines():
+        fields = line.split("\t")
+        if len(fields) == 2 and fields[0] == "reclaim":
+            return int(fields[1])
+    return 0
+
+
+@autobackup.command()
+@click.option("--backup-name", is_flag=False, required=False, type=str)
+@click.option("--source", "on_source", is_flag=True)
+@click.option("--thresholds", is_flag=False, type=str, default="1,7,30,90,365")
+@click.option("--exact", is_flag=True)
+@click_add_options(click_global_options)
+@click.pass_context
+def usage(
+    ctx: click.Context,
+    *,
+    backup_name: None | str,
+    on_source: bool,
+    thresholds: str,
+    exact: bool,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+    days = sorted({int(_day) for _day in thresholds.split(",")})
+    assert days
+
+    mapping = autobackup_property_map()
+    jobs = autobackup_jobs()
+
+    pairs: list[tuple[str, str]] = []
+    for dataset in sorted(mapping):
+        for _name in sorted(mapping[dataset]):
+            if backup_name and _name != backup_name:
+                continue
+            value, source = mapping[dataset][_name]
+            if not autobackup_is_selected(value, source):
+                continue
+            pairs.append((dataset, _name))
+
+    index: dict[str, dict[str, list[tuple[str, str, int, int, int]]]] = {}
+    now = int(time.time())
+
+    for dataset, _name in pairs:
+        if on_source:
+            examined = dataset
+            ssh_target = None
+        else:
+            job = jobs.get(_name)
+            if not job:
+                continue
+            examined = autobackup_target_dataset(dataset, job)
+            ssh_target = job.ssh_target
+
+        pool = examined.split("/")[0]
+        key = f"{ssh_target or ''}:{pool}"
+        if key not in index:
+            index[key] = zfs_snapshot_index(pool, ssh_target, verbose)
+
+        rows = index[key].get(examined, [])
+        if not rows:
+            continue
+
+        total = sum(_row[4] for _row in rows)
+        span = now - rows[0][2]
+        buckets: dict[int, tuple[int, int]] = {}
+
+        for day in days:
+            cutoff = now - (day * 86400)
+            older = [_row for _row in rows if _row[2] < cutoff]
+            if not older:
+                buckets[day] = (0, 0)
+                continue
+            if exact:
+                reclaim = zfs_range_reclaim(
+                    examined, rows[0][0], older[-1][0], ssh_target, verbose
+                )
+            else:
+                reclaim = sum(_row[4] for _row in older)
+            buckets[day] = (len(older), reclaim)
+
+        if dict_output:
+            print(
+                {
+                    examined: {
+                        "snapshots": len(rows),
+                        "used_by_snapshots": total,
+                        "span_days": span // 86400,
+                        "older_than": {
+                            f"{_day}d": {"count": _c, "reclaim": _r}
+                            for _day, (_c, _r) in buckets.items()
+                        },
+                    }
+                },
+                flush=True,
+            )
+        else:
+            columns = [
+                examined,
+                f"n={len(rows)}",
+                f"span={span // 86400}d",
+                f"snap={format_bytes(total)}",
+            ]
+            columns += [
+                f">{_day}d={buckets[_day][0]}/{format_bytes(buckets[_day][1])}"
+                for _day in days
+            ]
+            print("\t".join(columns), flush=True)
