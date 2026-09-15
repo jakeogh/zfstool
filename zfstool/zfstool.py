@@ -1214,7 +1214,11 @@ def run(
             *autobackup_job_args(_name, jobs[_name], test)
         )
         icp(command)
-        command(_fg=True)
+        if not test:
+            command(_fg=True)
+            continue
+        for line in command(_iter=True, _err_to_out=True):
+            print(f"--test: {line.rstrip()}", flush=True)
 
 
 @autobackup.command()
