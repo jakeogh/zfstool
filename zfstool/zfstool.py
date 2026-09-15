@@ -696,3 +696,224 @@ def zfs_set_sharenfs(
         print({None: zfs_command} if dict_output else zfs_command, flush=True)
         return
     zfs_command(_fg=True)
+
+
+AUTOBACKUP_PREFIX = "autobackup:"
+
+CRON_PATHS = (
+    Path("/etc/crontab"),
+    Path("/etc/cron.d"),
+    Path("/etc/cron.hourly"),
+    Path("/etc/cron.daily"),
+    Path("/etc/cron.weekly"),
+    Path("/etc/cron.monthly"),
+    Path("/var/spool/cron"),
+)
+
+
+def zfs_dataset_list() -> list[str]:
+    output = str(_zfs("list", "-H", "-o", "name", "-t", "filesystem,volume"))
+    return [_line for _line in output.splitlines() if _line]
+
+
+def autobackup_property_map() -> dict[str, dict[str, tuple[str, str]]]:
+    output = str(
+        _zfs(
+            "get",
+            "-H",
+            "-o",
+            "name,property,value,source",
+            "-t",
+            "filesystem,volume",
+            "all",
+        )
+    )
+    mapping: dict[str, dict[str, tuple[str, str]]] = {}
+    for line in output.splitlines():
+        if not line:
+            continue
+        fields = line.split("\t")
+        assert len(fields) == 4
+        dataset, prop, value, source = fields
+        if not prop.startswith(AUTOBACKUP_PREFIX):
+            continue
+        backup_name = prop[len(AUTOBACKUP_PREFIX) :]
+        mapping.setdefault(dataset, {})[backup_name] = (value, source)
+    return mapping
+
+
+def autobackup_is_selected(value: str, source: str) -> bool:
+    if value == "true":
+        return True
+    if value == "child":  # a local "child" excludes the dataset itself
+        return source != "local"
+    return False
+
+
+def autobackup_schedule_lines() -> list[tuple[Path, int, str]]:
+    hits: list[tuple[Path, int, str]] = []
+    for path in CRON_PATHS:
+        if not path.exists():
+            continue
+        candidates = sorted(path.rglob("*")) if path.is_dir() else [path]
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            content = candidate.read_text(encoding="utf8", errors="replace")
+            for index, line in enumerate(content.splitlines(), start=1):
+                if "zfs-autobackup" in line:
+                    hits.append((candidate, index, line.strip()))
+    return hits
+
+
+@cli.group(no_args_is_help=True, cls=AHGroup)
+@click_add_options(click_global_options)
+@click.pass_context
+def autobackup(
+    ctx: click.Context,
+    *,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+
+@autobackup.command()
+@click.option("--backup-name", is_flag=False, required=False, type=str)
+@click_add_options(click_global_options)
+@click.pass_context
+def status(
+    ctx: click.Context,
+    *,
+    backup_name: None | str,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+    mapping = autobackup_property_map()
+
+    eprint("=== autobackup properties ===")
+    for dataset in sorted(mapping):
+        for _name in sorted(mapping[dataset]):
+            if backup_name and _name != backup_name:
+                continue
+            value, source = mapping[dataset][_name]
+            selected = autobackup_is_selected(value, source)
+            if dict_output:
+                print(
+                    {
+                        dataset: {
+                            "backup_name": _name,
+                            "value": value,
+                            "source": source,
+                            "selected": selected,
+                        }
+                    },
+                    flush=True,
+                )
+            else:
+                print(f"{dataset}\t{_name}\t{value}\t{source}", flush=True)
+
+    eprint("=== schedule ===")
+    for path, index, line in autobackup_schedule_lines():
+        if dict_output:
+            print({path.as_posix(): {"line": index, "text": line}}, flush=True)
+        else:
+            print(f"{path}:{index}\t{line}", flush=True)
+
+
+@autobackup.command()
+@click.option("--backup-name", is_flag=False, required=False, type=str)
+@click_add_options(click_global_options)
+@click.pass_context
+def selected(
+    ctx: click.Context,
+    *,
+    backup_name: None | str,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+    mapping = autobackup_property_map()
+
+    for dataset in sorted(mapping):
+        for _name in sorted(mapping[dataset]):
+            if backup_name and _name != backup_name:
+                continue
+            value, source = mapping[dataset][_name]
+            if not autobackup_is_selected(value, source):
+                continue
+            if dict_output:
+                print(
+                    {dataset: {"backup_name": _name, "source": source}},
+                    flush=True,
+                )
+            else:
+                print(f"{dataset}\t{_name}\t{source}", flush=True)
+
+
+@autobackup.command()
+@click.option("--backup-name", is_flag=False, required=False, type=str)
+@click_add_options(click_global_options)
+@click.pass_context
+def unselected(
+    ctx: click.Context,
+    *,
+    backup_name: None | str,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+    mapping = autobackup_property_map()
+
+    for dataset in zfs_dataset_list():
+        properties = mapping.get(dataset, {})
+        if backup_name:
+            names = [backup_name] if backup_name in properties else []
+        else:
+            names = sorted(properties)
+
+        covered = [
+            _name
+            for _name in names
+            if autobackup_is_selected(*properties[_name])
+        ]
+        if covered:
+            continue
+
+        excluded_by = [
+            _name for _name in names if properties[_name][0] in {"false", "child"}
+        ]
+        reason = f"excluded:{','.join(excluded_by)}" if excluded_by else "unconfigured"
+
+        if dict_output:
+            print({dataset: {"reason": reason}}, flush=True)
+        else:
+            print(f"{dataset}\t{reason}", flush=True)
