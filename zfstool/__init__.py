@@ -36,6 +36,7 @@ from .zfstool import (
 from .zfstool import zfs_check_mountpoints as zfs_check_mountpoints
 from .zfstool import zfs_dataset_list as zfs_dataset_list
 from .zfstool import zfs_dataset_state as zfs_dataset_state
+from .zfstool import zfs_destroy_recursive as zfs_destroy_recursive
 from .zfstool import zfs_hold_tags as zfs_hold_tags
 from .zfstool import zfs_range_reclaim as zfs_range_reclaim
 from .zfstool import zfs_set_sharenfs as zfs_set_sharenfs

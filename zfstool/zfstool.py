@@ -1625,3 +1625,63 @@ def usage(
     hidden = len(rendered) - len(shown)
     if hidden:
         eprint(f"({hidden} dataset(s) with no snapshot space hidden, --all to show)")
+
+
+@cli.command()
+@click.argument("dataset", required=True, nargs=1)
+@click.option("--ssh-target", is_flag=False, required=False, type=str)
+@click.option("--simulate", is_flag=True)
+@click_add_options(click_global_options)
+@click.pass_context
+def zfs_destroy_recursive(
+    ctx: click.Context,
+    *,
+    dataset: str,
+    ssh_target: None | str,
+    simulate: bool,
+    verbose_inf: bool,
+    dict_output: bool,
+    verbose: bool = False,
+) -> None:
+    tty, verbose = tvic(
+        ctx=ctx,
+        verbose=verbose,
+        verbose_inf=verbose_inf,
+        ic=ic,
+    )
+
+    assert not dataset.startswith("/")
+    assert "@" not in dataset
+    assert len(dataset.split()) == 1
+    assert "/" in dataset  # refuse to operate on a pool root
+
+    index = zfs_snapshot_index(dataset, ssh_target, verbose)
+    held = [
+        f"{_dataset}@{_row[0]}"
+        for _dataset, _rows in index.items()
+        for _row in _rows
+        if _row[3] > 0
+    ]
+    tags = zfs_hold_tags(held, ssh_target, verbose) if held else {}
+
+    for snapshot in sorted(tags):
+        for tag in sorted(tags[snapshot]):
+            if ssh_target:
+                command = _ssh.rebake(ssh_target, "zfs", "release", tag, snapshot)
+            else:
+                command = _zfs.rebake("release", tag, snapshot)
+            if simulate:
+                print(command, flush=True)
+                continue
+            icp(command)
+            command()
+
+    if ssh_target:
+        command = _ssh.rebake(ssh_target, "zfs", "destroy", "-r", dataset)
+    else:
+        command = _zfs.rebake("destroy", "-r", dataset)
+    if simulate:
+        print(command, flush=True)
+        return
+    icp(command)
+    command(_fg=True)
