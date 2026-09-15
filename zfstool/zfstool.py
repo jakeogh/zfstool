@@ -740,7 +740,8 @@ class AutobackupResult:
     target_pool: None | str
     newest_common: None | str
     age: None | int
-    oldest_common: None | str
+    newest_point: None | str
+    oldest_point: None | str
     point_count: int
     pending: int
     recent_points: tuple[tuple[str, int], ...]
@@ -974,7 +975,8 @@ def autobackup_verify(
                     target_pool=None,
                     newest_common=None,
                     age=None,
-                    oldest_common=None,
+                    newest_point=None,
+                    oldest_point=None,
                     point_count=0,
                     pending=0,
                     recent_points=(),
@@ -1003,7 +1005,8 @@ def autobackup_verify(
                     target_pool=target_pool,
                     newest_common=None,
                     age=None,
-                    oldest_common=None,
+                    newest_point=None,
+                    oldest_point=None,
                     point_count=0,
                     pending=len(source_rows),
                     recent_points=(),
@@ -1024,10 +1027,11 @@ def autobackup_verify(
                     target_pool=target_pool,
                     newest_common=None,
                     age=None,
-                    oldest_common=None,
-                    point_count=0,
+                    newest_point=target_rows[-1][0],
+                    oldest_point=target_rows[0][0],
+                    point_count=len(target_rows),
                     pending=len(source_rows),
-                    recent_points=(),
+                    recent_points=tuple((_row[0], _row[2]) for _row in target_rows),
                 )
             )
             continue
@@ -1050,7 +1054,7 @@ def autobackup_verify(
 
         if orphaned:
             status = "hold-orphan"
-        elif threshold and age > threshold:
+        elif pending and threshold and age > threshold:
             status = "stale"
         else:
             status = "ok"
@@ -1064,10 +1068,11 @@ def autobackup_verify(
                 target_pool=target_pool,
                 newest_common=newest[0],
                 age=age,
-                oldest_common=common[0][0],
-                point_count=len(common),
+                newest_point=target_rows[-1][0],
+                oldest_point=target_rows[0][0],
+                point_count=len(target_rows),
                 pending=pending,
-                recent_points=tuple((_row[0], _row[2]) for _row in common),
+                recent_points=tuple((_row[0], _row[2]) for _row in target_rows),
             )
         )
 
@@ -1310,7 +1315,7 @@ def selected(
                         result.dataset,
                         result.backup_name,
                         result.status,
-                        result.newest_common or "-",
+                        result.newest_point or "-",
                         autobackup_format_age(result.age),
                         str(result.point_count),
                         f"pending={result.pending}",
