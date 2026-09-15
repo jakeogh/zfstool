@@ -858,11 +858,11 @@ def autobackup_target_unsafe(result: AutobackupResult) -> bool:
 
 def autobackup_target_state(result: AutobackupResult) -> str:
     if not result.target:
-        return "-"
+        return "target=-"
     flags = ["ro" if result.target_readonly else "rw"]
     if result.target_mounted:
         flags.append("mounted")
-    return ",".join(flags)
+    return f"target={','.join(flags)}"
 
 
 def autobackup_target_dataset(dataset: str, job: AutobackupJob) -> str:
