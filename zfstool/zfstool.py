@@ -2,10 +2,14 @@
 
 import os
 import shutil
+import time
+from dataclasses import asdict
+from dataclasses import dataclass
 from pathlib import Path
 from signal import SIG_DFL
 from signal import SIGPIPE
 from signal import signal
+from statistics import median
 
 import click
 import hs
@@ -837,12 +841,26 @@ def status(
 
 @autobackup.command()
 @click.option("--backup-name", is_flag=False, required=False, type=str)
+@click.option("--verified", is_flag=True)
+@click.option("--target-path", is_flag=False, required=False, type=str)
+@click.option("--ssh-target", is_flag=False, required=False, type=str)
+@click.option("--strip-path", is_flag=False, required=False, type=int)
+@click.option("--max-age", is_flag=False, required=False, type=int)
+@click.option("--stale-factor", is_flag=False, required=False, type=int, default=3)
+@click.option("--points", is_flag=False, required=False, type=int, default=0)
 @click_add_options(click_global_options)
 @click.pass_context
 def selected(
     ctx: click.Context,
     *,
     backup_name: None | str,
+    verified: bool,
+    target_path: None | str,
+    ssh_target: None | str,
+    strip_path: None | int,
+    max_age: None | int,
+    stale_factor: int,
+    points: int,
     verbose_inf: bool,
     dict_output: bool,
     verbose: bool = False,
@@ -856,6 +874,7 @@ def selected(
 
     mapping = autobackup_property_map()
 
+    pairs: list[tuple[str, str]] = []
     for dataset in sorted(mapping):
         for _name in sorted(mapping[dataset]):
             if backup_name and _name != backup_name:
@@ -863,6 +882,11 @@ def selected(
             value, source = mapping[dataset][_name]
             if not autobackup_is_selected(value, source):
                 continue
+            pairs.append((dataset, _name))
+
+    if not verified:
+        for dataset, _name in pairs:
+            source = mapping[dataset][_name][1]
             if dict_output:
                 print(
                     {dataset: {"backup_name": _name, "source": source}},
@@ -870,6 +894,48 @@ def selected(
                 )
             else:
                 print(f"{dataset}\t{_name}\t{source}", flush=True)
+        return
+
+    override = AutobackupTarget(
+        target_path=target_path,
+        ssh_target=ssh_target,
+        strip_path=strip_path if strip_path is not None else 0,
+    )
+    results = autobackup_verify(
+        pairs=pairs,
+        override=override if target_path else None,
+        max_age=max_age,
+        stale_factor=stale_factor,
+        verbose=verbose,
+    )
+
+    for result in results:
+        if dict_output:
+            print({result.dataset: asdict(result)}, flush=True)
+        else:
+            print(
+                "\t".join(
+                    [
+                        result.dataset,
+                        result.backup_name,
+                        result.status,
+                        result.newest_common or "-",
+                        autobackup_format_age(result.age),
+                        str(result.point_count),
+                        f"pending={result.pending}",
+                    ]
+                ),
+                flush=True,
+            )
+        if points and result.recent_points:
+            for name, creation in result.recent_points[-points:]:
+                eprint(f"    {name}\t{autobackup_format_age(int(time.time()) - creation)}")
+
+    for pool in sorted({_r.target_pool for _r in results if _r.target_pool}):
+        eprint(f"=== {pool} {autobackup_scrub_line(pool, ssh_target, verbose)} ===")
+
+    if any(_r.status != "ok" for _r in results):
+        ctx.exit(1)
 
 
 @autobackup.command()
@@ -917,3 +983,369 @@ def unselected(
             print({dataset: {"reason": reason}}, flush=True)
         else:
             print(f"{dataset}\t{reason}", flush=True)
+
+
+_ssh = hs.Command("ssh")
+
+AUTOBACKUP_VALUE_OPTIONS = frozenset(
+    {
+        "--ssh-target",
+        "--ssh-source",
+        "--ssh-config",
+        "--strip-path",
+        "--keep-source",
+        "--keep-target",
+        "--filter-properties",
+        "--set-properties",
+        "--min-change",
+        "--snapshot-format",
+        "--property-format",
+        "--hold-format",
+        "--send-pipe",
+        "--recv-pipe",
+        "--exclude-received",
+        "--destroy-missing",
+        "--buffer",
+    }
+)
+
+
+@dataclass(frozen=True)
+class AutobackupTarget:
+    target_path: None | str
+    ssh_target: None | str
+    strip_path: int
+
+
+@dataclass(frozen=True)
+class AutobackupResult:
+    dataset: str
+    backup_name: str
+    status: str
+    target: None | str
+    target_pool: None | str
+    newest_common: None | str
+    age: None | int
+    oldest_common: None | str
+    point_count: int
+    pending: int
+    recent_points: tuple[tuple[str, int], ...]
+
+
+def autobackup_format_age(age: None | int) -> str:
+    if age is None:
+        return "-"
+    if age < 3600:
+        return f"{age // 60}m"
+    if age < 86400:
+        return f"{age // 3600}h"
+    return f"{age // 86400}d"
+
+
+def autobackup_parse_cron() -> dict[str, AutobackupTarget]:
+    targets: dict[str, AutobackupTarget] = {}
+    for _path, _index, line in autobackup_schedule_lines():
+        if line.startswith("#"):
+            continue
+        tokens = line.split()
+        if "zfs-autobackup" not in " ".join(tokens):
+            continue
+        start = 0
+        for index, token in enumerate(tokens):
+            if token.endswith("zfs-autobackup"):
+                start = index + 1
+                break
+        tokens = tokens[start:]
+
+        positional: list[str] = []
+        ssh_target: None | str = None
+        strip_path = 0
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token.startswith("-"):
+                key, _, inline = token.partition("=")
+                if inline:
+                    value = inline
+                elif key in AUTOBACKUP_VALUE_OPTIONS:
+                    index += 1
+                    value = tokens[index] if index < len(tokens) else ""
+                else:
+                    value = ""
+                if key == "--ssh-target":
+                    ssh_target = value
+                elif key == "--strip-path":
+                    strip_path = int(value)
+            else:
+                positional.append(token)
+            index += 1
+
+        if len(positional) < 2:
+            continue
+        targets[positional[0]] = AutobackupTarget(
+            target_path=positional[1],
+            ssh_target=ssh_target,
+            strip_path=strip_path,
+        )
+    return targets
+
+
+def autobackup_target_dataset(dataset: str, target: AutobackupTarget) -> str:
+    assert target.target_path
+    remainder = dataset.split("/")[target.strip_path :]
+    assert remainder
+    return "/".join([target.target_path] + remainder)
+
+
+def zfs_snapshot_index(
+    root: str,
+    ssh_target: None | str,
+    verbose: bool,
+) -> dict[str, list[tuple[str, str, int, int]]]:
+    args = [
+        "list",
+        "-Hp",
+        "-t",
+        "snapshot",
+        "-o",
+        "name,guid,creation,userrefs",
+        "-r",
+        root,
+    ]
+    if ssh_target:
+        command = _ssh.rebake(ssh_target, "zfs", *args)
+    else:
+        command = _zfs.rebake(*args)
+    if verbose:
+        icp(command)
+
+    index: dict[str, list[tuple[str, str, int, int]]] = {}
+    for line in str(command()).splitlines():
+        if not line:
+            continue
+        fields = line.split("\t")
+        assert len(fields) == 4
+        name, guid, creation, userrefs = fields
+        dataset, _, snapshot = name.partition("@")
+        assert snapshot
+        index.setdefault(dataset, []).append(
+            (snapshot, guid, int(creation), 0 if userrefs == "-" else int(userrefs))
+        )
+    for rows in index.values():
+        rows.sort(key=lambda _row: _row[2])
+    return index
+
+
+def zfs_hold_tags(
+    snapshots: list[str],
+    ssh_target: None | str,
+    verbose: bool,
+) -> dict[str, list[str]]:
+    tags: dict[str, list[str]] = {}
+    for offset in range(0, len(snapshots), 50):
+        chunk = snapshots[offset : offset + 50]
+        if ssh_target:
+            command = _ssh.rebake(ssh_target, "zfs", "holds", "-H", *chunk)
+        else:
+            command = _zfs.rebake("holds", "-H", *chunk)
+        if verbose:
+            icp(command)
+        for line in str(command()).splitlines():
+            if not line:
+                continue
+            fields = line.split("\t")
+            assert len(fields) >= 2
+            tags.setdefault(fields[0], []).append(fields[1])
+    return tags
+
+
+def autobackup_stale_threshold(
+    creations: list[int],
+    max_age: None | int,
+    stale_factor: int,
+) -> None | int:
+    if max_age:
+        return max_age
+    if len(creations) < 3:
+        return None
+    intervals = [
+        _later - _earlier
+        for _earlier, _later in zip(creations[-11:], creations[-10:], strict=False)
+    ]
+    if not intervals:
+        return None
+    return int(median(intervals)) * stale_factor
+
+
+def autobackup_verify(
+    *,
+    pairs: list[tuple[str, str]],
+    override: None | AutobackupTarget,
+    max_age: None | int,
+    stale_factor: int,
+    verbose: bool,
+) -> list[AutobackupResult]:
+    cron_targets = {} if override else autobackup_parse_cron()
+    if verbose:
+        ic(cron_targets)
+
+    source_pools = sorted({_dataset.split("/")[0] for _dataset, _ in pairs})
+    source_index: dict[str, list[tuple[str, str, int, int]]] = {}
+    for pool in source_pools:
+        source_index.update(zfs_snapshot_index(pool, None, verbose))
+
+    target_index: dict[str, dict[str, list[tuple[str, str, int, int]]]] = {}
+    target_holds: dict[str, dict[str, list[str]]] = {}
+
+    held = [
+        f"{_dataset}@{_row[0]}"
+        for _dataset, _rows in source_index.items()
+        for _row in _rows
+        if _row[3] > 0
+    ]
+    source_holds = zfs_hold_tags(held, None, verbose) if held else {}
+    if verbose:
+        ic(source_holds)
+
+    now = int(time.time())
+    results: list[AutobackupResult] = []
+
+    for dataset, name in pairs:
+        target = override if override else cron_targets.get(name)
+        if not target or not target.target_path:
+            results.append(
+                AutobackupResult(
+                    dataset=dataset,
+                    backup_name=name,
+                    status="unverifiable",
+                    target=None,
+                    target_pool=None,
+                    newest_common=None,
+                    age=None,
+                    oldest_common=None,
+                    point_count=0,
+                    pending=0,
+                    recent_points=(),
+                )
+            )
+            continue
+
+        target_dataset = autobackup_target_dataset(dataset, target)
+        target_pool = target_dataset.split("/")[0]
+        key = f"{target.ssh_target or ''}:{target_pool}"
+        if key not in target_index:
+            target_index[key] = zfs_snapshot_index(
+                target_pool, target.ssh_target, verbose
+            )
+            target_held = [
+                f"{_dataset}@{_row[0]}"
+                for _dataset, _rows in target_index[key].items()
+                for _row in _rows
+                if _row[3] > 0
+            ]
+            target_holds[key] = (
+                zfs_hold_tags(target_held, target.ssh_target, verbose)
+                if target_held
+                else {}
+            )
+
+        source_rows = source_index.get(dataset, [])
+        target_rows = target_index[key].get(target_dataset, [])
+
+        if not target_rows:
+            results.append(
+                AutobackupResult(
+                    dataset=dataset,
+                    backup_name=name,
+                    status="missing",
+                    target=target_dataset,
+                    target_pool=target_pool,
+                    newest_common=None,
+                    age=None,
+                    oldest_common=None,
+                    point_count=0,
+                    pending=len(source_rows),
+                    recent_points=(),
+                )
+            )
+            continue
+
+        target_guids = {_row[1] for _row in target_rows}
+        common = [_row for _row in source_rows if _row[1] in target_guids]
+
+        if not common:
+            results.append(
+                AutobackupResult(
+                    dataset=dataset,
+                    backup_name=name,
+                    status="diverged",
+                    target=target_dataset,
+                    target_pool=target_pool,
+                    newest_common=None,
+                    age=None,
+                    oldest_common=None,
+                    point_count=0,
+                    pending=len(source_rows),
+                    recent_points=(),
+                )
+            )
+            continue
+
+        newest = common[-1]
+        age = now - newest[2]
+        pending = sum(1 for _row in source_rows if _row[2] > newest[2])
+
+        hold_tag = f"zfs_autobackup:{name}"
+        orphaned = [
+            _row[0]
+            for _row in source_rows
+            if _row[0] != newest[0]
+            and hold_tag in source_holds.get(f"{dataset}@{_row[0]}", [])
+        ]
+
+        threshold = autobackup_stale_threshold(
+            [_row[2] for _row in source_rows], max_age, stale_factor
+        )
+
+        if orphaned:
+            status = "hold-orphan"
+        elif threshold and age > threshold:
+            status = "stale"
+        else:
+            status = "ok"
+
+        results.append(
+            AutobackupResult(
+                dataset=dataset,
+                backup_name=name,
+                status=status,
+                target=target_dataset,
+                target_pool=target_pool,
+                newest_common=newest[0],
+                age=age,
+                oldest_common=common[0][0],
+                point_count=len(common),
+                pending=pending,
+                recent_points=tuple((_row[0], _row[2]) for _row in common),
+            )
+        )
+
+    return results
+
+
+def autobackup_scrub_line(
+    pool: str,
+    ssh_target: None | str,
+    verbose: bool,
+) -> str:
+    if ssh_target:
+        command = _ssh.rebake(ssh_target, "zpool", "status", pool)
+    else:
+        command = _zpool.rebake("status", pool)
+    if verbose:
+        icp(command)
+    for line in str(command()).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("scan:"):
+            return stripped
+    return "scan: unknown"
