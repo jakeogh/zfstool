@@ -1488,6 +1488,7 @@ def zfs_range_reclaim(
 @click.option("--source", "on_source", is_flag=True)
 @click.option("--thresholds", is_flag=False, type=str, default="1,7,30,90,365")
 @click.option("--exact", is_flag=True)
+@click.option("--all", "show_all", is_flag=True)
 @click_add_options(click_global_options)
 @click.pass_context
 def usage(
@@ -1497,6 +1498,7 @@ def usage(
     on_source: bool,
     thresholds: str,
     exact: bool,
+    show_all: bool,
     verbose_inf: bool,
     dict_output: bool,
     verbose: bool = False,
@@ -1526,17 +1528,20 @@ def usage(
 
     index: dict[str, dict[str, list[tuple[str, str, int, int, int]]]] = {}
     now = int(time.time())
+    rendered: list[tuple[str, int, int, int, dict[int, tuple[int, int]]]] = []
 
     for dataset, _name in pairs:
         if on_source:
             examined = dataset
             ssh_target = None
+            prefix = ""
         else:
             job = jobs.get(_name)
             if not job:
                 continue
             examined = autobackup_target_dataset(dataset, job)
             ssh_target = job.ssh_target
+            prefix = f"{job.target_path}/"
 
         pool = examined.split("/")[0]
         key = f"{ssh_target or ''}:{pool}"
@@ -1548,7 +1553,7 @@ def usage(
             continue
 
         total = sum(_row[4] for _row in rows)
-        span = now - rows[0][2]
+        span = (now - rows[0][2]) // 86400
         buckets: dict[int, tuple[int, int]] = {}
 
         for day in days:
@@ -1571,7 +1576,7 @@ def usage(
                     examined: {
                         "snapshots": len(rows),
                         "used_by_snapshots": total,
-                        "span_days": span // 86400,
+                        "span_days": span,
                         "older_than": {
                             f"{_day}d": {"count": _c, "reclaim": _r}
                             for _day, (_c, _r) in buckets.items()
@@ -1580,15 +1585,43 @@ def usage(
                 },
                 flush=True,
             )
-        else:
-            columns = [
-                examined,
-                f"n={len(rows)}",
-                f"span={span // 86400}d",
-                f"snap={format_bytes(total)}",
-            ]
-            columns += [
-                f">{_day}d={buckets[_day][0]}/{format_bytes(buckets[_day][1])}"
-                for _day in days
-            ]
-            print("\t".join(columns), flush=True)
+            continue
+
+        label = examined[len(prefix) :] if examined.startswith(prefix) else examined
+        rendered.append((label, len(rows), span, total, buckets))
+
+    if dict_output:
+        return
+
+    shown = [_row for _row in rendered if show_all or _row[3]]
+    shown.sort(key=lambda _row: _row[3], reverse=True)
+    if not shown:
+        return
+
+    headers = ["dataset", "snaps", "span", "total"] + [f">{_day}d" for _day in days]
+    table = [headers]
+    for label, count, span, total, buckets in shown:
+        table.append(
+            [label, str(count), f"{span}d", format_bytes(total)]
+            + [format_bytes(buckets[_day][1]) for _day in days]
+        )
+
+    widths = [max(len(_row[_i]) for _row in table) for _i in range(len(headers))]
+    eprint(
+        "  ".join(
+            _cell.ljust(widths[_i]) if _i == 0 else _cell.rjust(widths[_i])
+            for _i, _cell in enumerate(headers)
+        )
+    )
+    for row in table[1:]:
+        print(
+            "  ".join(
+                _cell.ljust(widths[_i]) if _i == 0 else _cell.rjust(widths[_i])
+                for _i, _cell in enumerate(row)
+            ),
+            flush=True,
+        )
+
+    hidden = len(rendered) - len(shown)
+    if hidden:
+        eprint(f"({hidden} dataset(s) with no snapshot space hidden, --all to show)")
