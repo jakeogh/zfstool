@@ -858,11 +858,22 @@ def autobackup_target_unsafe(result: AutobackupResult) -> bool:
 
 def autobackup_target_state(result: AutobackupResult) -> str:
     if not result.target:
-        return "target=-"
+        return "-"
     flags = ["ro" if result.target_readonly else "rw"]
     if result.target_mounted:
         flags.append("mounted")
-    return f"target={','.join(flags)}"
+    return ",".join(flags)
+
+
+def table_widths(rows: list[list[str]]) -> list[int]:
+    return [max(len(_row[_i]) for _row in rows) for _i in range(len(rows[0]))]
+
+
+def table_line(cells: list[str], widths: list[int]) -> str:
+    return "  ".join(
+        _cell.ljust(widths[_i]) if _i == 0 else _cell.rjust(widths[_i])
+        for _i, _cell in enumerate(cells)
+    )
 
 
 def autobackup_target_dataset(dataset: str, job: AutobackupJob) -> str:
@@ -1374,31 +1385,44 @@ def selected(
         verbose=verbose,
     )
 
-    for result in results:
-        if dict_output:
+    if dict_output:
+        for result in results:
             print({result.dataset: asdict(result)}, flush=True)
-        else:
-            print(
-                "\t".join(
-                    [
-                        result.dataset,
-                        result.backup_name,
-                        result.status,
-                        result.newest_point or "-",
-                        autobackup_format_age(result.age),
-                        str(result.point_count),
-                        f"pending={result.pending}",
-                        autobackup_target_state(result),
-                    ]
-                ),
-                flush=True,
+    elif results:
+        headers = [
+            "dataset",
+            "backup",
+            "status",
+            "newest",
+            "age",
+            "points",
+            "pending",
+            "target",
+        ]
+        table = [headers]
+        for result in results:
+            table.append(
+                [
+                    result.dataset,
+                    result.backup_name,
+                    result.status,
+                    result.newest_point or "-",
+                    autobackup_format_age(result.age),
+                    str(result.point_count),
+                    str(result.pending),
+                    autobackup_target_state(result),
+                ]
             )
-        if points and result.recent_points:
-            for _snapshot, _creation in result.recent_points[-points:]:
-                eprint(
-                    f"    {_snapshot}\t"
-                    f"{autobackup_format_age(int(time.time()) - _creation)}"
-                )
+        widths = table_widths(table)
+        eprint(table_line(headers, widths))
+        for result, row in zip(results, table[1:], strict=True):
+            print(table_line(row, widths), flush=True)
+            if points and result.recent_points:
+                for _snapshot, _creation in result.recent_points[-points:]:
+                    eprint(
+                        f"    {_snapshot}  "
+                        f"{autobackup_format_age(int(time.time()) - _creation)}"
+                    )
 
     for pool in sorted({_r.target_pool for _r in results if _r.target_pool}):
         job = next(_j for _j in jobs.values() if _j.target_path.startswith(pool))
@@ -1606,21 +1630,10 @@ def usage(
             + [format_bytes(buckets[_day][1]) for _day in days]
         )
 
-    widths = [max(len(_row[_i]) for _row in table) for _i in range(len(headers))]
-    eprint(
-        "  ".join(
-            _cell.ljust(widths[_i]) if _i == 0 else _cell.rjust(widths[_i])
-            for _i, _cell in enumerate(headers)
-        )
-    )
+    widths = table_widths(table)
+    eprint(table_line(headers, widths))
     for row in table[1:]:
-        print(
-            "  ".join(
-                _cell.ljust(widths[_i]) if _i == 0 else _cell.rjust(widths[_i])
-                for _i, _cell in enumerate(row)
-            ),
-            flush=True,
-        )
+        print(table_line(row, widths), flush=True)
 
     hidden = len(rendered) - len(shown)
     if hidden:

@@ -28,6 +28,8 @@ from .zfstool import format_bytes as format_bytes
 from .zfstool import run as run
 from .zfstool import selected as selected
 from .zfstool import status as status
+from .zfstool import table_line as table_line
+from .zfstool import table_widths as table_widths
 from .zfstool import unselected as unselected
 from .zfstool import usage as usage
 from .zfstool import (
