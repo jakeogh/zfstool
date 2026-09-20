@@ -704,8 +704,6 @@ def zfs_set_sharenfs(
     zfs_command(_fg=True)
 
 
-_zfs_autobackup = hs.Command("zfs-autobackup")
-
 AUTOBACKUP_PREFIX = "autobackup:"
 
 AUTOBACKUP_CONFIG = Path("/etc/zfstool/autobackup.toml")
@@ -1294,8 +1292,14 @@ def run(
     else:
         names = sorted(jobs)
 
+    # Resolved here rather than at module scope: hs.Command raises when the
+    # binary is absent, so a lookup at import time makes zfs-autobackup a
+    # requirement of every caller that imports this module, including the
+    # installer, which wants create_zfs_filesystem and nothing else.
+    zfs_autobackup = hs.Command("zfs-autobackup")
+
     for _name in names:
-        command = _zfs_autobackup.rebake(
+        command = zfs_autobackup.rebake(
             *autobackup_job_args(_name, jobs[_name], test)
         )
         icp(command)
