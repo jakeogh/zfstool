@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-import shutil
 import time
 import tomllib
 from dataclasses import asdict
@@ -147,6 +146,13 @@ def zfs_check_mountpoints(
     type=str,
 )
 @click.option(
+    "--ashift",
+    is_flag=False,
+    required=True,
+    type=int,
+    help=ASHIFT_HELP,
+)
+@click.option(
     "--mount-point",
     is_flag=False,
     required=True,
@@ -168,11 +174,20 @@ def write_zfs_root_filesystem_on_devices(
     raid: str,
     raid_group_size: int,
     pool_name: str,
+    ashift: int,
     mount_point: Path,
     verbose_inf: bool,
     dict_output: bool,
     verbose: bool = False,
 ) -> None:
+    """Create the root pool and its boot dataset, mounted under mount_point.
+
+    The pool is imported with mount_point as altroot: every dataset created
+    here mounts beneath it now and at its stated mountpoint once the
+    installed system boots. The devices are the vdevs, whole disks or
+    partitions alike; on a disk that also carries the boot partitions they
+    are partitions.
+    """
     tty, verbose = tvic(
         ctx=ctx,
         verbose=verbose,
@@ -180,6 +195,8 @@ def write_zfs_root_filesystem_on_devices(
         ic=ic,
     )
     devices = tuple(Path(_device) for _device in devices)
+    assert 9 <= ashift <= 16
+    eprint(f"using block size: {1 << ashift} (ashift={ashift})")
 
     # https://raw.githubusercontent.com/ryao/zfs-overlay/master/zfs-install
     hs.Command("modprobe")("zfs")
@@ -187,8 +204,6 @@ def write_zfs_root_filesystem_on_devices(
     for device in devices:
         assert path_is_block_special(device, symlink_ok=True)
         assert not block_special_path_is_mounted(device)
-        if not device.name.startswith("nvme"):
-            assert not device.name[-1].isdigit()
 
     assert len(devices) >= raid_group_size
     assert len(pool_name) > 2
@@ -230,12 +245,17 @@ def write_zfs_root_filesystem_on_devices(
         "zstd_compress",
     ):
         zpool_create_args += ["-o", f"feature@{feature}=enabled"]
-    zpool_create_args += ["-o", "cachefile=/tmp/zpool.cache"]
+    zpool_create_args += ["-o", f"ashift={ashift}"]
+    # -R alone sets cachefile=none; named explicitly, the cache is written
+    # where the installed system expects it too, so the caller can copy the
+    # file across once the target tree exists
+    zpool_create_args += ["-o", "cachefile=/etc/zfs/zpool.cache"]
     for prop in (
         "atime=off",
         "compression=zstd",
         "copies=1",
         "xattr=sa",
+        "acltype=posixacl",
         "sharesmb=off",
         "sharenfs=off",
         "checksum=blake3",
@@ -249,13 +269,21 @@ def write_zfs_root_filesystem_on_devices(
     icp(zpool_create_args)
     _zpool(*zpool_create_args, _fg=True)
 
+    # canmount=noauto: the initramfs mounts the boot dataset, so zfs mount -a
+    # at boot leaves it alone, and so does the altroot import here until it
+    # is mounted by name
+    root_dataset = f"{pool_name}/ROOT/gentoo"
     _zfs("create", "-o", "mountpoint=none", f"{pool_name}/ROOT", _fg=True)
-    _zfs("create", "-o", "mountpoint=/", f"{pool_name}/ROOT/gentoo", _fg=True)
-    _zpool("set", f"bootfs={pool_name}/ROOT/gentoo", pool_name, _fg=True)
-
-    zfs_config_dir = mount_point / "etc" / "zfs"
-    os.makedirs(zfs_config_dir, exist_ok=True)
-    shutil.copy2("/tmp/zpool.cache", zfs_config_dir / "zpool.cache")
+    _zfs(
+        "create",
+        "-o", "mountpoint=/",
+        "-o", "canmount=noauto",
+        root_dataset,
+        _fg=True,
+    )
+    _zpool("set", f"bootfs={root_dataset}", pool_name, _fg=True)
+    _zfs("mount", root_dataset, _fg=True)
+    eprint(f"zfs root: {root_dataset} mounted at {mount_point.as_posix()}")
 
 
 @cli.command()
