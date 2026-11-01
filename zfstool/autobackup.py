@@ -68,6 +68,13 @@ CRON_PATHS = (
     Path("/etc/cron.monthly"),
     Path("/var/spool/cron"),
 )
+# A machine's job is named after it and carries its backups' snapshot and
+# property names; zfs allows only these characters in a user property name.
+JOB_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+# a new machine's job, as zbook17's has run since before claims existed
+NEW_JOB_KEEP_SOURCE = "1"
+NEW_JOB_KEEP_TARGET = "24,1h1d,1d30d,30d1y"
+NEW_JOB_EXTRA = ("--progress", "--verbose")
 TIME_UNITS = {"s": 1, "min": 60, "h": 3600, "d": 86400, "w": 7 * 86400, "m": 30 * 86400, "y": 365 * 86400}
 
 
@@ -330,6 +337,64 @@ def target_dataset(dataset: str, job: Job) -> str:
     if not remainder:
         raise click.ClickException(f"job {job.name}: strip_path {job.strip_path} strips all of {dataset}")
     return "/".join([job.target, *remainder])
+
+
+# --- new machines --------------------------------------------------------------
+
+
+def parse_target(text: str) -> tuple[str, str]:
+    """DEST:PARENT: the ssh destination, and the dataset every machine's
+    backup tree goes below, as live_backup in poolz3_8x16TB_A/live_backup."""
+    ssh_target, _, parent = text.partition(":")
+    if not ssh_target or "/" not in parent or parent.startswith("/") or parent.endswith("/"):
+        raise click.ClickException(f"backup target {text!r}: expected DEST:POOL/DATASET, as root@newbox1:poolz3_8x16TB_A/live_backup")
+    return ssh_target, parent
+
+
+def new_machine_problems(ssh_target: str, parent: str, name: str) -> list[str]:
+    """Why the machine called name could not start backing up below parent
+    now: an empty list when it can. Its tree must not exist yet, whatever
+    is in it; a reinstalled machine or another given the same name is
+    refused here as it is by claim and run."""
+    problems: list[str] = []
+    if not JOB_NAME.match(name):
+        problems.append(f"{name!r} cannot name a job: zfs property names take only lowercase letters, digits and . _ -")
+    try:
+        mounted = on_target(ssh_target, "zfs", "list", "-H", "-o", "mounted", parent).strip()
+    except TargetError as error:
+        return problems + [f"{parent} on {ssh_target}: {error}"]
+    if mounted == "yes":
+        problems.append(f"{parent} is mounted on {ssh_target}; backup trees are never mounted")
+    pool = parent.split("/")[0]
+    health = on_target(ssh_target, "zpool", "list", "-H", "-o", "health", pool).strip()
+    if health != "ONLINE":
+        problems.append(f"pool {pool} on {ssh_target} is {health}")
+    tree = f"{parent}/{name}"
+    try:
+        on_target(ssh_target, "zfs", "list", "-H", "-o", "name", tree)
+    except TargetError as error:
+        if "dataset does not exist" not in error.stderr:
+            problems.append(str(error))
+    else:
+        problems.append(
+            f"{tree} already exists on {ssh_target}: the backup of an earlier machine named {name}, "
+            f"or of this one before it was reinstalled. Rename or remove it there first."
+        )
+    return problems
+
+
+def new_job(name: str, ssh_target: str, parent: str) -> str:
+    """The config for a machine's one job, backing it up to parent/name."""
+    extra = ", ".join(f'"{_arg}"' for _arg in NEW_JOB_EXTRA)
+    return (
+        f"[jobs.{name}]\n"
+        f'target = "{parent}/{name}"\n'
+        f'ssh_target = "{ssh_target}"\n'
+        f"strip_path = 0\n"
+        f'keep_source = "{NEW_JOB_KEEP_SOURCE}"\n'
+        f'keep_target = "{NEW_JOB_KEEP_TARGET}"\n'
+        f"extra = [{extra}]\n"
+    )
 
 
 # --- claims ------------------------------------------------------------------
@@ -811,6 +876,24 @@ def claim(ctx: click.Context, *, backup_name: str, verbose_inf: bool, dict_outpu
         return
     on_target(job.ssh_target, "zfs", "set", f"{CLAIM_PROPERTY}={format_claim(merged)}", job.target)
     print(f"claimed {job.target} for {format_claim(merged)}", flush=True)
+
+
+@autobackup_cli.command("check-target")
+@click.argument("backup_target")
+@click.argument("name")
+@click_add_options(click_global_options)
+@click.pass_context
+def check_target(ctx: click.Context, *, backup_target: str, name: str, verbose_inf: bool, dict_output: bool, verbose: bool = False) -> None:
+    """Whether a new machine called NAME could start backing up to
+    BACKUP_TARGET (DEST:POOL/DATASET), as the deployment server checks
+    before an install."""
+    tvic(ctx=ctx, verbose=verbose, verbose_inf=verbose_inf, ic=ic)
+    problems = new_machine_problems(*parse_target(backup_target), name)
+    for problem in problems:
+        print(problem, flush=True)
+    if not problems:
+        print(f"usable: {parse_target(backup_target)[1]}/{name}", flush=True)
+    ctx.exit(1 if problems else 0)
 
 
 @autobackup_cli.command()

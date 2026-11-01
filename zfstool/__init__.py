@@ -13,6 +13,9 @@ from .autobackup import autobackup_cli as autobackup_cli
 from .autobackup import check as check
 from .autobackup import claim_refusal as claim_refusal
 from .autobackup import load_config as load_config
+from .autobackup import new_job as new_job
+from .autobackup import new_machine_problems as new_machine_problems
+from .autobackup import parse_target as parse_target
 from .autobackup import parse_schedule as parse_schedule
 from .autobackup import property_map as property_map
 from .autobackup import read_claim as read_claim
