@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zfstool"
-version = "1!0.0.1793574943"
+version = "1!0.0.1794098926"
 description = "Common functions for working with zfs"
 authors = [
     { name = "Justin Keogh", email = "github.com@v6y.net" },
@@ -16,7 +16,7 @@ dependencies = [
     "clicktool @ git+https://github.com/jakeogh/clicktool@fe263331c27a4b392ce04261d83267759098d6b7",
     "devicetool @ git+https://github.com/jakeogh/devicetool@c6b17d66d25cf20f4a492e6c483b1c536954d649",
     "eprint @ git+https://github.com/jakeogh/eprint@6ee1deca0c24b684eb5093247d6bd22e11f1b057",
-    "hs @ git+https://github.com/jakeogh/hs@b6f75452351ccc668bc87c6f03d73268ff7a0b24",
+    "hs @ git+https://github.com/jakeogh/hs@38f44d64cc8d12c41c5e6b470c3313a7a37c6f57",
     "itertool @ git+https://github.com/jakeogh/itertool@f46b317d3d2d8e2a6d55193c25caf3f5ea9c5b04",
     "mounttool @ git+https://github.com/jakeogh/mounttool@1dc451c21a89a45ffb69161a6ed7432c8192d9a6",
     "timestamptool @ git+https://github.com/jakeogh/timestamptool@4abe95a6ce95530eb1e6c06f16bff1f851ebee29",

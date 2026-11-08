@@ -14,9 +14,16 @@ a backup it does not own. Only `claim` writes the claim, and only after
 checking that everything already in the root shares a snapshot with this
 machine.
 
-The outcome of the last run or check is kept in STATE for the shell prompt:
-a line with its time, a line with "ok" or a summary, then one line per
-problem.
+STATE holds, for the shell prompt, the time up to which every selected
+dataset is on its target, from this machine alone: the target need not be
+up, nor reachable, for it to be right. zfs-autobackup holds a snapshot as
+the job's zfs_autobackup:<job> only once the target has it, so a dataset is
+backed up as of its newest held snapshot's creation, or as of the moment of
+reading when that snapshot is its newest and nothing has been written since.
+The oldest of those is recorded; 0 when a selected dataset has never
+arrived, or is selected by a job that does not exist; "-" when no job is
+configured. A run that sends nothing leaves the recorded time standing,
+which is still true: it only ever lags what is on the target.
 """
 
 import fcntl
@@ -54,6 +61,8 @@ JOB_KEYS = frozenset({"target", "ssh_target", "strip_path", "keep_source", "keep
 DESTRUCTIVE_OPTIONS = frozenset({"--force", "--destroy-incompatible", "--destroy-missing", "--rollback"})
 # zfstool finds a job's snapshots by zfs-autobackup's default <job>-<time>
 NAMING_OPTIONS = frozenset({"--snapshot-format", "--property-format", "--hold-format"})
+# the holds are how zfstool knows what arrived without asking the target
+HOLD_OPTIONS = frozenset({"--no-holds"})
 # Passed on every run. A received dataset is never mounted on the target
 # host, where its mountpoint would land on that host's own tree, and a
 # dataset that is itself a received backup is never sent on, which keeps
@@ -203,6 +212,11 @@ def load_config() -> Config:
             raise click.ClickException(
                 f"{path}: job {name}: {sorted(options & NAMING_OPTIONS)}: zfstool finds a "
                 f"job's snapshots and holds by zfs-autobackup's default names"
+            )
+        if options & HOLD_OPTIONS:
+            raise click.ClickException(
+                f"{path}: job {name}: {sorted(options & HOLD_OPTIONS)}: zfstool records when the "
+                f"last backup arrived from the holds zfs-autobackup puts on what the target has"
             )
         if "/" not in entry["target"]:
             raise click.ClickException(f"{path}: job {name}: the target is a dataset below a pool, not a pool")
@@ -558,15 +572,42 @@ def check(config: Config, mapping: dict[str, dict[str, tuple[str, str]]]) -> tup
     return problems, results
 
 
-def write_state(problems: list[Problem]) -> None:
-    kinds = sorted({f"{_p.job} {_p.kind}" for _p in problems})
-    summary = "ok" if not problems else ", ".join(kinds)
-    if len(summary) > 60:
-        summary = summary[:57] + "..."
-    lines = [str(int(time.time())), summary] + [f"{_p.job}\t{_p.kind}\t{_p.detail}" for _p in problems]
+def backed_up_as_of(config: Config, mapping: dict[str, dict[str, tuple[str, str]]]) -> int:
+    """The time up to which every selected dataset is on its target, read
+    from this machine alone; see STATE. 0 when one has never arrived."""
+    pairs = selected_pairs(mapping)
+    if not pairs or any(_name not in config.jobs for _, _name in pairs):
+        return 0
+    now = int(time.time())
+    index: dict[str, list[Snapshot]] = {}
+    written: dict[str, int] = {}
+    for pool in sorted({_dataset.split("/")[0] for _dataset, _ in pairs}):
+        index.update(snapshot_index(pool, None))
+        output = on_target(None, "zfs", "list", "-Hp", "-o", "name,written", "-t", "filesystem,volume", "-r", pool)
+        for line in output.splitlines():
+            if line:
+                name, value = line.split("\t")
+                written[name] = int(value) if value.isdigit() else -1
+    held = [f"{_ds}@{_s.name}" for _ds, _ in pairs for _s in index.get(_ds, []) if _s.userrefs]
+    holds = hold_tags(held, None) if held else {}
+    times = []
+    for dataset, name in pairs:
+        snapshots = index.get(dataset, [])
+        tag = f"zfs_autobackup:{name}"
+        arrived = [_s for _s in snapshots if tag in holds.get(f"{dataset}@{_s.name}", [])]
+        if not arrived:
+            return 0
+        # zfs-autobackup takes no snapshot of a dataset nothing was written
+        # to, so its newest held one can be old and still all there is
+        unchanged = snapshots[-1].name == arrived[-1].name and written.get(dataset) == 0
+        times.append(now if unchanged else arrived[-1].creation)
+    return min(times)
+
+
+def write_state(value: str) -> None:
     STATE.parent.mkdir(parents=True, exist_ok=True)
     staged = STATE.with_name(STATE.name + ".new")
-    staged.write_text("\n".join(lines) + "\n", encoding="utf8")
+    staged.write_text(value + "\n", encoding="utf8")
     staged.replace(STATE)
 
 
@@ -719,13 +760,16 @@ def autobackup_cli(ctx: click.Context, *, verbose_inf: bool, dict_output: bool, 
 @click.pass_context
 def run(ctx: click.Context, *, backup_name: None | str, test: bool, verbose_inf: bool, dict_output: bool, verbose: bool = False) -> None:
     """Run the jobs, each only into a target it has claimed, under one lock,
-    logging to LOG_DIR; then check every job and record the outcome for the
-    prompt. With no jobs configured there is nothing to do."""
+    logging to LOG_DIR; record for the prompt the time everything is backed
+    up as of, then check every job. With no jobs configured there is nothing
+    to do but say so to the prompt."""
     tvic(ctx=ctx, verbose=verbose, verbose_inf=verbose_inf, ic=ic)
     if not test:
         require_root("run")
     config = load_config()
     if not config.jobs:
+        if not test:
+            write_state("-")
         return
     if backup_name and backup_name not in config.jobs:
         raise click.ClickException(f"{CONFIG} has no job {backup_name}")
@@ -741,7 +785,7 @@ def run(ctx: click.Context, *, backup_name: None | str, test: bool, verbose_inf:
     if lock is None:
         # From cron this is the hourly run finding the last one still sending,
         # which is expected of a first send; a run that never finishes stops
-        # updating STATE, and the prompt reports the outcome as overdue.
+        # updating STATE, and the backup's age in the prompt keeps growing.
         if interactive:
             raise click.ClickException(f"an earlier run still holds {LOCK}: {LOCK.read_text(encoding='utf8').strip()}")
         return
@@ -752,11 +796,11 @@ def run(ctx: click.Context, *, backup_name: None | str, test: bool, verbose_inf:
         with log_path.open("ab") as log:
             mapping = property_map()
             failures = send(config, names, mapping, log=log, log_path=log_path, test=False, interactive=interactive)
+            write_state(str(backed_up_as_of(config, mapping)))
             checked, _ = check(config, mapping)
             # a failure and the check's view of the same job both stand
             reported = {(_f.job, _f.kind, _f.detail) for _f in failures}
             problems = failures + [_p for _p in checked if (_p.job, _p.kind, _p.detail) not in reported]
-            write_state(problems)
             log.write(("\n".join(f"{_p.job}\t{_p.kind}\t{_p.detail}" for _p in problems) or "ok").encode() + b"\n")
     finally:
         os.close(lock)
@@ -797,14 +841,18 @@ def send(
 @click.pass_context
 def check_command(ctx: click.Context, *, verbose_inf: bool, dict_output: bool, verbose: bool = False) -> None:
     """Check every job's claim and every selected dataset's backup without
-    sending anything; as root, record the outcome for the prompt."""
+    sending anything; as root, first record for the prompt the time
+    everything is backed up as of."""
     tvic(ctx=ctx, verbose=verbose, verbose_inf=verbose_inf, ic=ic)
     config = load_config()
     if not config.jobs:
+        if os.geteuid() == 0:
+            write_state("-")
         return
-    problems, _ = check(config, property_map())
+    mapping = property_map()
     if os.geteuid() == 0:
-        write_state(problems)
+        write_state(str(backed_up_as_of(config, mapping)))
+    problems, _ = check(config, mapping)
     report(problems)
     ctx.exit(1 if problems else 0)
 
@@ -901,7 +949,8 @@ def check_target(ctx: click.Context, *, backup_target: str, name: str, verbose_i
 @click_add_options(click_global_options)
 @click.pass_context
 def status(ctx: click.Context, *, backup_name: None | str, verbose_inf: bool, dict_output: bool, verbose: bool = False) -> None:
-    """Selection properties, jobs, schedule and the last recorded outcome."""
+    """Selection properties, jobs, schedule and the time recorded for the
+    prompt that everything is backed up as of."""
     tvic(ctx=ctx, verbose=verbose, verbose_inf=verbose_inf, ic=ic)
     mapping = property_map()
     eprint("=== autobackup properties ===")
@@ -926,14 +975,16 @@ def status(ctx: click.Context, *, backup_name: None | str, verbose_inf: bool, di
     eprint("=== schedule ===")
     for path, index, line in schedule_lines():
         print(f"{path}:{index}\t{line}", flush=True)
-    eprint(f"=== last outcome ({STATE}) ===")
-    if STATE.is_file():
-        lines = STATE.read_text(encoding="utf8").splitlines()
-        print(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(int(lines[0])))}\t{lines[1]}", flush=True)
-        for line in lines[2:]:
-            print(f"  {line}", flush=True)
-    else:
+    eprint(f"=== backed up as of ({STATE}) ===")
+    recorded = STATE.read_text(encoding="utf8").strip() if STATE.is_file() else ""
+    if not recorded:
         print("none recorded", flush=True)
+    elif recorded == "-":
+        print("no job configured", flush=True)
+    elif recorded == "0":
+        print("never: a selected dataset has not arrived", flush=True)
+    else:
+        print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(recorded))), flush=True)
 
 
 @autobackup_cli.command()
